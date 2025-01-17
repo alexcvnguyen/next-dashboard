@@ -4,9 +4,11 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { fetchSupabase } from '@/lib/supabase';
 import { startOfDay, subDays, format } from 'date-fns';
 
+// --- Types ---
 interface DailyLog {
   created_at: string;
   event_type: string;
@@ -14,16 +16,61 @@ interface DailyLog {
 
 interface ProcessedData {
   date: string;
-  wakeHour: number | null;
-  sleepHour: number | null;
+  [key: string]: string | number | null;
 }
 
+// --- Constants ---
+// Remove or modify these colors as needed
+const EVENT_COLORS = {
+  awake: '#8884d8',
+  asleep: '#82ca9d',
+  work_start: '#ffc658',
+  work_end: '#ff7300',
+  journal_start: '#00C49F'
+};
+
+type EventType = keyof typeof EVENT_COLORS;
+
+// --- Utility Functions ---
+// REMOVABLE: Time formatting utilities - can be replaced with your preferred format
+const formatTimeToAMPM = (hours: number | null) => {
+  if (hours === null) return '-';
+  const wholePart = Math.floor(hours);
+  const minutePart = Math.round((hours - wholePart) * 60);
+  
+  let adjustedHours = wholePart % 12;
+  if (adjustedHours === 0) adjustedHours = 12;
+  
+  const ampm = wholePart < 12 ? 'AM' : 'PM';
+  return `${adjustedHours}:${minutePart.toString().padStart(2, '0')} ${ampm}`;
+};
+
+// --- Custom Components ---
+// REMOVABLE: Custom tooltip component - can be replaced with default Recharts tooltip
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  return (
+    <div className="bg-white p-2 border border-gray-200 rounded shadow-sm">
+      <p className="font-medium">{label}</p>
+      {payload.map((item: any, index: number) => (
+        <p key={index} style={{ color: item.color }}>
+          {`${item.name}: ${formatTimeToAMPM(item.value)}`}
+        </p>
+      ))}
+    </div>
+  );
+};
+
 export default function Dashboard() {
+  // --- State ---
   const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
   const [timeRange, setTimeRange] = useState('30');
+  const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['awake', 'asleep']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // --- Data Fetching ---
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -31,11 +78,10 @@ export default function Dashboard() {
         setError(null);
         const startDate = format(subDays(new Date(), parseInt(timeRange)), 'yyyy-MM-dd');
         
-        // Fetch sleep/wake events
+        // Fetch all event types
         const events = await fetchSupabase('daily_log', {
           select: '*',
-          created_at: `gte.${startDate}`,
-          event_type: 'in.(awake,asleep)'
+          created_at: `gte.${startDate}`
         });
 
         // Process the events into daily data
@@ -45,19 +91,10 @@ export default function Dashboard() {
                       new Date(event.created_at).getMinutes() / 60;
 
           if (!acc[date]) {
-            acc[date] = {
-              date,
-              wakeHour: null,
-              sleepHour: null
-            };
+            acc[date] = { date };
           }
 
-          if (event.event_type === 'awake') {
-            acc[date].wakeHour = hour;
-          } else if (event.event_type === 'asleep') {
-            acc[date].sleepHour = hour;
-          }
-
+          acc[date][event.event_type] = hour;
           return acc;
         }, {});
 
@@ -77,19 +114,30 @@ export default function Dashboard() {
     fetchData();
   }, [timeRange]);
 
+  // --- Data Processing ---
   const calculateAverages = () => {
-    const validWakeTimes = timelineData.filter(d => d.wakeHour !== null);
-    const avgWakeTime = validWakeTimes.length ? 
-      validWakeTimes.reduce((sum, d) => sum + (d.wakeHour || 0), 0) / validWakeTimes.length : 
-      0;
-
-    return {
-      avgWakeTime: avgWakeTime.toFixed(2),
-    };
+    return selectedEvents.reduce((acc: { [key: string]: string }, eventType) => {
+      const validTimes = timelineData.filter(d => d[eventType] !== null);
+      const avg = validTimes.length ? 
+        validTimes.reduce((sum, d) => sum + (Number(d[eventType]) || 0), 0) / validTimes.length : 
+        0;
+      acc[eventType] = formatTimeToAMPM(avg);
+      return acc;
+    }, {});
   };
 
   const averages = calculateAverages();
 
+  // --- Event Handlers ---
+  const toggleEventType = (eventType: EventType) => {
+    setSelectedEvents(prev => 
+      prev.includes(eventType) 
+        ? prev.filter(e => e !== eventType)
+        : [...prev, eventType]
+    );
+  };
+
+  // --- Loading & Error States ---
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -106,10 +154,12 @@ export default function Dashboard() {
     );
   }
 
+  // --- Render ---
   return (
     <div className="p-4 space-y-4">
+      {/* Header Section */}
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Sleep Analysis</h1>
+        <h1 className="text-2xl font-bold">Personal Insights</h1>
         <Select value={timeRange} onValueChange={setTimeRange}>
           <SelectTrigger className="w-32">
             <SelectValue placeholder="Select range" />
@@ -122,26 +172,49 @@ export default function Dashboard() {
         </Select>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Avg Wake Time</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{averages.avgWakeTime}h</p>
-            <p className="text-sm text-gray-500">
-              {timelineData.length} days analyzed
-            </p>
-          </CardContent>
-        </Card>
+      {/* Event Type Toggles */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        {Object.entries(EVENT_COLORS).map(([eventType, color]) => (
+          <div key={eventType} className="flex items-center space-x-2">
+            <Checkbox
+              id={eventType}
+              checked={selectedEvents.includes(eventType as EventType)}
+              onCheckedChange={() => toggleEventType(eventType as EventType)}
+            />
+            <label
+              htmlFor={eventType}
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+              style={{ color }}
+            >
+              {eventType.replace('_', ' ')}
+            </label>
+          </div>
+        ))}
       </div>
 
+      {/* Average Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+        {selectedEvents.map(eventType => (
+          <Card key={eventType}>
+            <CardHeader>
+              <CardTitle className="text-sm">
+                Avg {eventType.replace('_', ' ')} Time
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xl font-bold">{averages[eventType]}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Timeline Chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Sleep/Wake Timeline</CardTitle>
+          <CardTitle>Daily Timeline</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-64">
+          <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={timelineData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -154,23 +227,20 @@ export default function Dashboard() {
                   domain={[0, 24]} 
                   ticks={[0, 4, 8, 12, 16, 20, 24]}
                   tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => formatTimeToAMPM(value).split(' ')[0]} // Show time without AM/PM
                 />
-                <Tooltip />
+                <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="wakeHour" 
-                  stroke="#8884d8" 
-                  name="Wake Hour"
-                  dot={{ r: 4 }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="sleepHour" 
-                  stroke="#82ca9d" 
-                  name="Sleep Hour"
-                  dot={{ r: 4 }}
-                />
+                {selectedEvents.map(eventType => (
+                  <Line 
+                    key={eventType}
+                    type="monotone" 
+                    dataKey={eventType} 
+                    stroke={EVENT_COLORS[eventType]}
+                    name={eventType.replace('_', ' ')}
+                    dot={{ r: 4 }}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
