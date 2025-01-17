@@ -39,13 +39,12 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
       <p className="font-medium">{label}</p>
       {payload.map((item: TooltipPayloadItem, index: number) => {
         const value = typeof item.value === 'string' ? parseFloat(item.value) : item.value;
-        const isScore = ['mood_score', 'energy_score'].includes(item.name);
         const isSleep = item.name === 'asleep';
         const isNextDay = isSleep && value >= HOURS_IN_DAY;
         
         return (
           <p key={index} style={{ color: item.stroke }}>
-            {`${item.name}: ${isScore ? value.toFixed(1) : formatTimeToAMPM(value)}`}
+            {`${item.name}: ${isSleep || item.name === 'awake' ? formatTimeToAMPM(value) : Math.round(value)}`}
             {isNextDay && ' (next day)'}
           </p>
         );
@@ -57,7 +56,7 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
 export function Dashboard() {
   // --- State ---
   const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
-  const [timeRange, setTimeRange] = useState('30');
+  const [timeRange, setTimeRange] = useState('60');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['awake', 'asleep', 'mood_score', 'energy_score']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +133,7 @@ export function Dashboard() {
         const avg = validValues.length ? 
           validValues.reduce((sum, d) => sum + (Number(d[eventType]) || 0), 0) / validValues.length : 
           0;
-        acc[eventType] = avg.toFixed(1);
+        acc[eventType] = Math.round(avg).toString();
       } else {
         const avgTime = calculateAverageTime(timelineData, eventType as EventType);
         acc[eventType] = avgTime !== null ? formatTimeToAMPM(avgTime) : '-';
@@ -174,7 +173,9 @@ export function Dashboard() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="7">7 days</SelectItem>
+            <SelectItem value="14">14 days</SelectItem>
             <SelectItem value="30">30 days</SelectItem>
+            <SelectItem value="60">60 days</SelectItem>
             <SelectItem value="90">90 days</SelectItem>
           </SelectContent>
         </Select>
