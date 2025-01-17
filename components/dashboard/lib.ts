@@ -1,4 +1,5 @@
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { tTest, standardDeviation } from 'simple-statistics';
 
 // --- Types ---
 export interface DailyLog {
@@ -122,7 +123,76 @@ export interface AnalyticsResult {
   averageScore: number;
   sampleSize: number;
   insight: string;
+  pValue: number | null;
+  effectSize: number | null;
+  standardDev: number | null;
+  correlationStrength: string;
 }
+
+// Helper function to calculate Cohen's d effect size
+const calculateEffectSize = (group1: number[], group2: number[]): number => {
+  const n1 = group1.length;
+  const n2 = group2.length;
+  const mean1 = group1.reduce((a, b) => a + b) / n1;
+  const mean2 = group2.reduce((a, b) => a + b) / n2;
+  
+  const pooledStdev = Math.sqrt(
+    ((n1 - 1) * standardDeviation(group1) ** 2 + (n2 - 1) * standardDeviation(group2) ** 2) / 
+    (n1 + n2 - 2)
+  );
+  
+  return Math.abs(mean1 - mean2) / pooledStdev;
+};
+
+// Helper function to get correlation strength description
+const getCorrelationStrength = (correlation: number): string => {
+  const absCorr = Math.abs(correlation);
+  if (absCorr < 0.1) return 'negligible';
+  if (absCorr < 0.3) return 'weak';
+  if (absCorr < 0.5) return 'moderate';
+  if (absCorr < 0.7) return 'strong';
+  return 'very strong';
+};
+
+// Helper function to calculate correlation coefficient
+const calculateCorrelation = (x: number[], y: number[]): number => {
+  try {
+    const n = x.length;
+    if (n < 2) return 0;  // Need at least 2 points for correlation
+
+    // Calculate means
+    const xMean = x.reduce((a, b) => a + b, 0) / n;
+    const yMean = y.reduce((a, b) => a + b, 0) / n;
+
+    // Calculate variances and covariance
+    let xxVar = 0;
+    let yyVar = 0;
+    let xyVar = 0;
+
+    for (let i = 0; i < n; i++) {
+      const xDiff = x[i] - xMean;
+      const yDiff = y[i] - yMean;
+      xxVar += xDiff * xDiff;
+      yyVar += yDiff * yDiff;
+      xyVar += xDiff * yDiff;
+    }
+
+    // Check for zero variance
+    if (xxVar === 0 || yyVar === 0) return 0;
+
+    const correlation = xyVar / Math.sqrt(xxVar * yyVar);
+    
+    // Handle potential floating point errors
+    if (correlation > 1) return 1;
+    if (correlation < -1) return -1;
+    if (isNaN(correlation)) return 0;
+    
+    return correlation;
+  } catch (error) {
+    console.error('Error calculating correlation:', error);
+    return 0;
+  }
+};
 
 export const analyzeEventScoreRelationship = (
   data: ProcessedData[],
@@ -139,31 +209,76 @@ export const analyzeEventScoreRelationship = (
     typeof d[scoreType] === 'number'
   );
 
+  console.log(`Valid data points for ${eventType} and ${scoreType}: ${validData.length}`);
+
   if (validData.length < 3) {
     return {
       correlation: 0,
       averageScore: 0,
       sampleSize: validData.length,
-      insight: 'Not enough data for analysis'
+      insight: 'Not enough data for analysis',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
     };
   }
 
   // Split into early vs late groups based on Melbourne time
   const earlyDays = validData.filter(d => {
     const eventTime = Number(d[eventType]);
-    // Normalize the time to be within 0-24 range for comparison
-    const normalizedTime = eventTime >= HOURS_IN_DAY ? eventTime - HOURS_IN_DAY : eventTime;
-    return normalizedTime <= (earlyThreshold - DAY_PIVOT_HOUR);
+    // For sleep times, we need to handle the day boundary differently
+    let normalizedTime = eventTime;
+    if (eventType === 'asleep') {
+      // If time is after midnight but before pivot, it's still considered "previous day's sleep"
+      if (eventTime < DAY_PIVOT_HOUR) {
+        normalizedTime = eventTime + HOURS_IN_DAY;
+      }
+    } else {
+      // For other events, just normalize to 0-24 range
+      normalizedTime = eventTime >= HOURS_IN_DAY ? eventTime - HOURS_IN_DAY : eventTime;
+    }
+    const isEarly = normalizedTime <= (earlyThreshold - DAY_PIVOT_HOUR);
+    console.log(`Event time: ${eventTime}, Normalized: ${normalizedTime}, Threshold: ${earlyThreshold - DAY_PIVOT_HOUR}, Is Early: ${isEarly}`);
+    return isEarly;
   });
   const lateDays = validData.filter(d => !earlyDays.includes(d));
 
-  // Calculate averages
-  const earlyAvg = earlyDays.length > 0
-    ? earlyDays.reduce((sum, d) => sum + Number(d[scoreType]), 0) / earlyDays.length
-    : 0;
-  const lateAvg = lateDays.length > 0
-    ? lateDays.reduce((sum, d) => sum + Number(d[scoreType]), 0) / lateDays.length
-    : 0;
+  console.log(`Early days: ${earlyDays.length}, Late days: ${lateDays.length}`);
+
+  // Common variables used throughout the analysis
+  const eventName = eventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+
+  // Calculate averages with better handling of empty groups
+  const earlyScores = earlyDays.map(d => Number(d[scoreType]));
+  const lateScores = lateDays.map(d => Number(d[scoreType]));
+
+  console.log('Early scores:', earlyScores);
+  console.log('Late scores:', lateScores);
+
+  const earlyAvg = earlyScores.length > 0
+    ? earlyScores.reduce((sum, score) => sum + score, 0) / earlyScores.length
+    : null;
+  const lateAvg = lateScores.length > 0
+    ? lateScores.reduce((sum, score) => sum + score, 0) / lateScores.length
+    : null;
+
+  console.log(`Early average: ${earlyAvg}, Late average: ${lateAvg}`);
+
+  // If either group has no data, we can't make a meaningful comparison
+  if (earlyAvg === null || lateAvg === null) {
+    return {
+      correlation: 0,
+      averageScore: earlyAvg ?? lateAvg ?? 0,
+      sampleSize: validData.length,
+      insight: `Not enough data to compare early vs late ${eventName} times.`,
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
 
   // Calculate correlation using normalized times
   const times = validData.map(d => {
@@ -171,46 +286,61 @@ export const analyzeEventScoreRelationship = (
     return time >= HOURS_IN_DAY ? time - HOURS_IN_DAY : time;
   });
   const scores = validData.map(d => Number(d[scoreType]));
-  const correlation = calculateCorrelation(times, scores);
+  
+  // Ensure we have valid data for correlation
+  const correlation = times.length >= 2 ? calculateCorrelation(times, scores) : 0;
+  const correlationStrength = getCorrelationStrength(correlation);
+  
+  let pValue = null;
+  let effectSize = null;
+  let standardDev = null;
+
+  try {
+    if (earlyScores.length >= 2 && lateScores.length >= 2) {
+      // @ts-expect-error - simple-statistics type definition is incorrect, it actually accepts arrays
+      const tTestResult = tTest(earlyScores, lateScores);
+      pValue = tTestResult;
+      effectSize = calculateEffectSize(earlyScores, lateScores);
+    }
+    standardDev = scores.length >= 2 ? standardDeviation(scores) : null;
+  } catch (error) {
+    console.error('Error calculating statistics:', error);
+  }
 
   // Generate insight
   const scoreDiff = earlyAvg - lateAvg;
-  const eventName = eventType.replace('_', ' ');
-  const scoreTypeName = scoreType.replace('_', ' ');
   const normalizedThreshold = earlyThreshold - DAY_PIVOT_HOUR;
   
   let insight = '';
-  if (Math.abs(correlation) < 0.1) {
-    insight = `No significant relationship found between ${eventName} time and ${scoreTypeName}.`;
+  if (Math.abs(correlation) < 0.1 || isNaN(correlation)) {
+    insight = `No clear relationship found between ${eventName} time and ${scoreTypeName}.`;
   } else {
     const betterTime = scoreDiff > 0 ? 'earlier' : 'later';
-    const worseTime = scoreDiff > 0 ? 'later' : 'earlier';
     const threshold = formatTimeToAMPM(normalizedThreshold);
     const betterAvg = (betterTime === 'earlier' ? earlyAvg : lateAvg).toFixed(1);
     const worseAvg = (betterTime === 'earlier' ? lateAvg : earlyAvg).toFixed(1);
+
+    // Add group sizes to the insight
+    const earlyCount = earlyScores.length;
+    const lateCount = lateScores.length;
     
     insight = `When you ${eventName} ${betterTime} (${betterTime === 'earlier' ? 'before' : 'after'} ${threshold}), ` +
       `your ${scoreTypeName} averages ${Math.abs(scoreDiff).toFixed(1)} points higher ` +
-      `(${betterAvg} vs ${worseAvg}). ` +
-      `${eventName === 'work start' ? 'Starting work' : eventName === 'awake' ? 'Waking up' : 'Going to sleep'} ` +
-      `${worseTime} is associated with lower scores.`;
+      `(${betterAvg} vs ${worseAvg}, based on ${earlyCount} early vs ${lateCount} late days). ` +
+      `This shows a ${correlationStrength} relationship (r=${correlation.toFixed(2)})` +
+      `${pValue !== null && pValue < 0.05 ? ' and is statistically significant' : ''}.`;
   }
 
   return {
     correlation,
     averageScore: earlyAvg,
     sampleSize: validData.length,
-    insight
+    insight,
+    pValue,
+    effectSize,
+    standardDev,
+    correlationStrength
   };
-};
-
-// Helper function to calculate correlation coefficient
-const calculateCorrelation = (x: number[], y: number[]): number => {
-  const n = x.length;
-  const sum1 = x.reduce((a, b) => a + b) * y.reduce((a, b) => a + b);
-  const sum2 = x.reduce((a, b) => a + b * b) * y.reduce((a, b) => a + b * b);
-  const sum3 = x.map((_, i) => x[i] * y[i]).reduce((a, b) => a + b);
-  return (n * sum3 - sum1) / Math.sqrt((n * sum2 - sum1 * sum1));
 };
 
 // Calculate average time for an event

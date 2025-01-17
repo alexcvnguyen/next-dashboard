@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { 
   ProcessedData, 
   analyzeEventScoreRelationship, 
-  DAY_PIVOT_HOUR, 
+  DAY_PIVOT_HOUR,
+  HOURS_IN_DAY,
   formatTimeToAMPM,
-  calculateAverageTime,
   EventType 
 } from './lib';
 
 interface InsightsProps {
   data: ProcessedData[];
+  averages: { [key: string]: string | number };
 }
 
 interface ThresholdConfig {
@@ -47,11 +48,54 @@ const THRESHOLDS: Record<string, ThresholdConfig> = {
   }
 };
 
-export function Insights({ data }: InsightsProps) {
+// Helper to convert time string (e.g. "7:30 AM") to hour number (e.g. 7.5)
+const parseTimeToHour = (timeStr: string, eventType: EventType): number | null => {
+  const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return null;
+
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+
+  if (period === 'PM' && hours !== 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+
+  const time = hours + minutes / 60;
+  
+  // For sleep times, if it's early morning (e.g., 12:30 AM),
+  // add 24 hours to put it in the next day range
+  if (eventType === 'asleep' && period === 'AM') {
+    return time + DAY_PIVOT_HOUR + HOURS_IN_DAY;
+  }
+  
+  // For all other times, just adjust for day pivot
+  return time + DAY_PIVOT_HOUR;
+};
+
+export function Insights({ data, averages }: InsightsProps) {
+  // Get initial thresholds from averages or fall back to defaults
+  const getInitialThreshold = (config: ThresholdConfig) => {
+    const avgTimeStr = averages[config.eventType];
+    if (typeof avgTimeStr === 'string' && avgTimeStr !== '-') {
+      const avgTime = parseTimeToHour(avgTimeStr, config.eventType);
+      if (avgTime !== null) {
+        return avgTime;
+      }
+    }
+    return config.default;
+  };
+
   // State for thresholds
-  const [wakeThreshold, setWakeThreshold] = useState(THRESHOLDS.wake.default);
-  const [workThreshold, setWorkThreshold] = useState(THRESHOLDS.work.default);
-  const [sleepThreshold, setSleepThreshold] = useState(THRESHOLDS.sleep.default);
+  const [wakeThreshold, setWakeThreshold] = useState(() => getInitialThreshold(THRESHOLDS.wake));
+  const [workThreshold, setWorkThreshold] = useState(() => getInitialThreshold(THRESHOLDS.work));
+  const [sleepThreshold, setSleepThreshold] = useState(() => getInitialThreshold(THRESHOLDS.sleep));
+
+  // Update thresholds when averages change
+  useEffect(() => {
+    setWakeThreshold(getInitialThreshold(THRESHOLDS.wake));
+    setWorkThreshold(getInitialThreshold(THRESHOLDS.work));
+    setSleepThreshold(getInitialThreshold(THRESHOLDS.sleep));
+  }, [averages]);
 
   // Analyze relationships between different events and scores
   const wakeAndMood = analyzeEventScoreRelationship(data, 'awake', 'mood_score', wakeThreshold);
@@ -64,11 +108,14 @@ export function Insights({ data }: InsightsProps) {
     value: number,
     onChange: (value: number[]) => void
   ) => {
-    const avgTime = calculateAverageTime(data, config.eventType);
+    const avgTimeStr = averages[config.eventType];
     
     const handleAverageClick = () => {
-      if (avgTime !== null) {
-        onChange([avgTime]);
+      if (typeof avgTimeStr === 'string' && avgTimeStr !== '-') {
+        const avgTime = parseTimeToHour(avgTimeStr, config.eventType);
+        if (avgTime !== null) {
+          onChange([avgTime]);
+        }
       }
     };
 
@@ -81,7 +128,7 @@ export function Insights({ data }: InsightsProps) {
               variant="outline" 
               size="sm"
               onClick={handleAverageClick}
-              disabled={avgTime === null}
+              disabled={typeof avgTimeStr !== 'string' || avgTimeStr === '-'}
             >
               Average
             </Button>
@@ -124,7 +171,19 @@ export function Insights({ data }: InsightsProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{wakeAndMood.insight}</p>
-            <p className="text-xs text-gray-500 mt-2">Based on {wakeAndMood.sampleSize} days of data</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Sample size: {wakeAndMood.sampleSize} days</p>
+              {wakeAndMood.standardDev !== null && (
+                <p>Variability (SD): ±{wakeAndMood.standardDev.toFixed(1)} points</p>
+              )}
+              {wakeAndMood.effectSize !== null && (
+                <p>Effect size (Cohen&apos;s d): {wakeAndMood.effectSize.toFixed(2)} 
+                  {wakeAndMood.effectSize > 0.8 ? ' (large)' : 
+                   wakeAndMood.effectSize > 0.5 ? ' (medium)' : 
+                   wakeAndMood.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -134,7 +193,19 @@ export function Insights({ data }: InsightsProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{wakeAndEnergy.insight}</p>
-            <p className="text-xs text-gray-500 mt-2">Based on {wakeAndEnergy.sampleSize} days of data</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Sample size: {wakeAndEnergy.sampleSize} days</p>
+              {wakeAndEnergy.standardDev !== null && (
+                <p>Variability (SD): ±{wakeAndEnergy.standardDev.toFixed(1)} points</p>
+              )}
+              {wakeAndEnergy.effectSize !== null && (
+                <p>Effect size (Cohen&apos;s d): {wakeAndEnergy.effectSize.toFixed(2)}
+                  {wakeAndEnergy.effectSize > 0.8 ? ' (large)' : 
+                   wakeAndEnergy.effectSize > 0.5 ? ' (medium)' : 
+                   wakeAndEnergy.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -144,7 +215,19 @@ export function Insights({ data }: InsightsProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{workAndMood.insight}</p>
-            <p className="text-xs text-gray-500 mt-2">Based on {workAndMood.sampleSize} days of data</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Sample size: {workAndMood.sampleSize} days</p>
+              {workAndMood.standardDev !== null && (
+                <p>Variability (SD): ±{workAndMood.standardDev.toFixed(1)} points</p>
+              )}
+              {workAndMood.effectSize !== null && (
+                <p>Effect size (Cohen&apos;s d): {workAndMood.effectSize.toFixed(2)}
+                  {workAndMood.effectSize > 0.8 ? ' (large)' : 
+                   workAndMood.effectSize > 0.5 ? ' (medium)' : 
+                   workAndMood.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -154,7 +237,19 @@ export function Insights({ data }: InsightsProps) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{sleepAndEnergy.insight}</p>
-            <p className="text-xs text-gray-500 mt-2">Based on {sleepAndEnergy.sampleSize} days of data</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Sample size: {sleepAndEnergy.sampleSize} days</p>
+              {sleepAndEnergy.standardDev !== null && (
+                <p>Variability (SD): ±{sleepAndEnergy.standardDev.toFixed(1)} points</p>
+              )}
+              {sleepAndEnergy.effectSize !== null && (
+                <p>Effect size (Cohen&apos;s d): {sleepAndEnergy.effectSize.toFixed(2)}
+                  {sleepAndEnergy.effectSize > 0.8 ? ' (large)' : 
+                   sleepAndEnergy.effectSize > 0.5 ? ' (medium)' : 
+                   sleepAndEnergy.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

@@ -127,7 +127,8 @@ export function Dashboard() {
 
   // --- Calculations ---
   const calculateAverages = () => {
-    return selectedEvents.reduce((acc: { [key: string]: string | number }, eventType) => {
+    // Calculate averages for all event types, not just selected ones
+    return Object.keys(EVENT_COLORS).reduce((acc: { [key: string]: string | number }, eventType) => {
       if (['mood_score', 'energy_score'].includes(eventType)) {
         const validValues = timelineData.filter(d => d[eventType] !== null);
         const avg = validValues.length ? 
@@ -135,7 +136,7 @@ export function Dashboard() {
           0;
         acc[eventType] = avg.toFixed(1);
       } else {
-        const avgTime = calculateAverageTime(timelineData, eventType);
+        const avgTime = calculateAverageTime(timelineData, eventType as EventType);
         acc[eventType] = avgTime !== null ? formatTimeToAMPM(avgTime) : '-';
       }
       return acc;
@@ -268,7 +269,7 @@ export function Dashboard() {
           <CardTitle>Insights & Analysis</CardTitle>
         </CardHeader>
         <CardContent>
-          <Insights data={timelineData} />
+          <Insights data={timelineData} averages={averages} />
         </CardContent>
       </Card>
     </div>
