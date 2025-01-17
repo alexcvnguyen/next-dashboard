@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -35,7 +35,7 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
-    <div className="bg-white p-2 border border-gray-200 rounded shadow-sm">
+    <div className="bg-white/90 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-md">
       <p className="font-medium">{label}</p>
       {payload.map((item: TooltipPayloadItem, index: number) => {
         const value = typeof item.value === 'string' ? parseFloat(item.value) : item.value;
@@ -44,7 +44,7 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
         
         return (
           <p key={index} style={{ color: item.stroke }}>
-            {`${item.name}: ${isSleep || item.name === 'awake' ? formatTimeToAMPM(value) : Math.round(value)}`}
+            {`${item.name}: ${isSleep || item.name === 'awake' ? formatTimeToAMPM(value) : value.toFixed(2)}`}
             {isNextDay && ' (next day)'}
           </p>
         );
@@ -58,8 +58,42 @@ export function Dashboard() {
   const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
   const [timeRange, setTimeRange] = useState('60');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['awake', 'asleep', 'mood_score', 'energy_score']);
+  const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Get moving average window size based on time range
+  const getMovingAverageWindow = (days: number) => {
+    if (days <= 7) return 3;
+    if (days <= 14) return 5;
+    if (days <= 30) return 7;
+    if (days <= 60) return 14;
+    return 21;
+  };
+
+  // Calculate moving average for a data series
+  const calculateMovingAverage = (data: ProcessedData[], field: keyof ProcessedData) => {
+    const window = getMovingAverageWindow(parseInt(timeRange));
+    return data.map((item, index) => {
+      const start = Math.max(0, index - Math.floor(window / 2));
+      const end = Math.min(data.length, start + window);
+      const values = data.slice(start, end)
+        .map(d => {
+          const value = d[field];
+          // Handle time values (convert to decimal hours if needed)
+          if (typeof value === 'string' && value.includes(':')) {
+            const [hours, minutes] = value.split(':').map(Number);
+            return hours + minutes / 60;
+          }
+          return Number(value);
+        })
+        .filter(v => !isNaN(v));
+      
+      if (values.length === 0) return null;
+      const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+      return avg;
+    });
+  };
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -133,7 +167,7 @@ export function Dashboard() {
         const avg = validValues.length ? 
           validValues.reduce((sum, d) => sum + (Number(d[eventType]) || 0), 0) / validValues.length : 
           0;
-        acc[eventType] = Math.round(avg).toString();
+        acc[eventType] = avg.toFixed(2);
       } else {
         const avgTime = calculateAverageTime(timelineData, eventType as EventType);
         acc[eventType] = avgTime !== null ? formatTimeToAMPM(avgTime) : '-';
@@ -144,11 +178,71 @@ export function Dashboard() {
 
   const averages = calculateAverages();
 
+  // Memoize enhanced timeline data with moving averages
+  const enhancedTimelineData = useMemo(() => {
+    if (!timelineData.length) return timelineData;
+
+    const data = [...timelineData];
+    if (showMovingAverage) {
+      selectedEvents.forEach(eventType => {
+        if (['mood_score', 'energy_score'].includes(eventType)) {
+          const movingAverages = calculateMovingAverage(timelineData, eventType as keyof ProcessedData);
+          data.forEach((item, index) => {
+            item[`${eventType}_ma`] = movingAverages[index];
+          });
+        }
+      });
+    }
+    return data;
+  }, [showMovingAverage, selectedEvents, timelineData]);
+
+  // Calculate chart lines
+  const chartLines = useMemo(() => {
+    if (!timelineData.length) return [];
+
+    return selectedEvents.flatMap(eventType => {
+      const isScore = ['mood_score', 'energy_score'].includes(eventType);
+      const lines = [];
+      
+      // Main data line
+      lines.push(
+        <Line 
+          key={eventType}
+          type="monotone" 
+          dataKey={eventType} 
+          stroke={EVENT_COLORS[eventType]}
+          name={eventType.replace('_', ' ')}
+          dot={{ r: 2, fill: EVENT_COLORS[eventType], strokeWidth: 1, fillOpacity: 0.6 }}
+          yAxisId={isScore ? 'score' : 'time'}
+        />
+      );
+
+      // Moving average line for scores
+      if (showMovingAverage && isScore) {
+        const maKey = `${eventType}_ma`;
+        lines.push(
+          <Line 
+            key={maKey}
+            type="monotone"
+            dataKey={maKey}
+            stroke={EVENT_COLORS[eventType]}
+            strokeDasharray="5 5"
+            name={`${eventType.replace('_', ' ')} (MA)`}
+            dot={false}
+            yAxisId="score"
+          />
+        );
+      }
+      
+      return lines;
+    });
+  }, [selectedEvents, showMovingAverage, timelineData, EVENT_COLORS]);
+
   // --- Loading & Error States ---
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-900"></div>
+        <div className="custom-loader rounded-full h-32 w-32 border-4"></div>
       </div>
     );
   }
@@ -163,12 +257,15 @@ export function Dashboard() {
 
   // --- Render ---
   return (
-    <div className="p-4 space-y-4">
+    <div className="max-w-[1400px] mx-auto p-6 space-y-6">
       {/* Header Section */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Personal Insights</h1>
+      <div className="dashboard-header flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Personal Insights</h1>
+          <p className="text-muted-foreground">Alex&apos;s daily patterns and wellness metrics</p>
+        </div>
         <Select value={timeRange} onValueChange={setTimeRange}>
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white/95 transition-colors">
             <SelectValue placeholder="Select range" />
           </SelectTrigger>
           <SelectContent>
@@ -181,8 +278,24 @@ export function Dashboard() {
         </Select>
       </div>
 
-      {/* Event Type Toggles */}
-      <div className="flex flex-wrap gap-2 mb-4">
+      {/* Controls */}
+      <div className="flex flex-wrap gap-4 mb-4">
+        {/* Moving Average Toggle */}
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id="moving-average"
+            checked={showMovingAverage}
+            onCheckedChange={() => setShowMovingAverage(prev => !prev)}
+          />
+          <label
+            htmlFor="moving-average"
+            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+          >
+            Show Moving Average
+          </label>
+        </div>
+        
+        {/* Event Type Toggles */}
         {Object.entries(EVENT_COLORS).map(([eventType, color]) => (
           <div key={eventType} className="flex items-center space-x-2">
             <Checkbox
@@ -204,7 +317,7 @@ export function Dashboard() {
       {/* Average Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
         {selectedEvents.map(eventType => (
-          <Card key={eventType}>
+          <Card key={eventType} className="card">
             <CardHeader>
               <CardTitle className="text-sm">
                 Avg {eventType.replace('_', ' ')}
@@ -218,14 +331,14 @@ export function Dashboard() {
       </div>
 
       {/* Timeline Chart */}
-      <Card>
+      <Card className="card">
         <CardHeader>
           <CardTitle>Daily Timeline</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-80">
+          <div className="h-80 chart-container">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={timelineData}>
+              <LineChart data={enhancedTimelineData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="date" 
@@ -247,17 +360,7 @@ export function Dashboard() {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                {selectedEvents.map(eventType => (
-                  <Line 
-                    key={eventType}
-                    type="monotone" 
-                    dataKey={eventType} 
-                    stroke={EVENT_COLORS[eventType]}
-                    name={eventType.replace('_', ' ')}
-                    dot={{ r: 4 }}
-                    yAxisId={['mood_score', 'energy_score'].includes(eventType) ? 'score' : 'time'}
-                  />
-                ))}
+                {chartLines}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -265,7 +368,7 @@ export function Dashboard() {
       </Card>
 
       {/* Insights Section */}
-      <Card>
+      <Card className="card">
         <CardHeader>
           <CardTitle>Insights & Analysis</CardTitle>
         </CardHeader>

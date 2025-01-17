@@ -4,6 +4,64 @@
 
 body {
   font-family: Arial, Helvetica, sans-serif;
+  background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--accent)) 100%);
+  min-height: 100vh;
+}
+
+/* Enhanced Card Styles */
+.card {
+  @apply backdrop-blur-sm bg-opacity-90 transition-all duration-300 hover:shadow-lg;
+  background: linear-gradient(to bottom right, hsl(var(--card)), hsl(var(--card)/0.9));
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+/* Loading Animation */
+@keyframes custom-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.custom-loader {
+  animation: custom-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  border-color: hsl(var(--primary)) transparent transparent transparent;
+}
+
+/* Enhanced Header */
+.dashboard-header {
+  @apply relative overflow-hidden rounded-lg p-6 mb-8;
+  background: linear-gradient(135deg, hsl(var(--primary)/0.1) 0%, hsl(var(--primary)/0.05) 100%);
+  backdrop-filter: blur(8px);
+}
+
+/* Smooth Transitions */
+.select-trigger,
+.checkbox {
+  @apply transition-all duration-200;
+}
+
+/* Chart Container */
+.chart-container {
+  @apply rounded-lg p-4 backdrop-blur-sm;
+  background: linear-gradient(to bottom right, hsl(var(--card)), hsl(var(--card)/0.95));
+}
+
+/* Event Type Labels */
+.event-type-label {
+  @apply transition-opacity hover:opacity-90 cursor-pointer;
+}
+
+/* Enhanced Card Hover */
+.card:hover {
+  transform: translateY(-2px);
+}
+
+/* Smooth Chart Transitions */
+.recharts-line {
+  transition: opacity 0.2s ease;
 }
 
 @layer utilities {
