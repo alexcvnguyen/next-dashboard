@@ -1,31 +1,4 @@
-/*
- * Dashboard Utilities and Types
- * 
- * SLEEP TRACKING CONSIDERATIONS:
- * Current approach for handling sleep that crosses midnight:
- * - Sleep times are normalized to a 24-hour cycle starting at 6PM (18:00)
- * - Times between 6PM-6AM are treated as part of the same sleep cycle
- * - Example: Sleeping at 1AM is stored as hour 25 (24 + 1)
- * 
- * Limitations & Trade-offs:
- * 1. Visualization:
- *    + Clearer representation of sleep continuity
- *    + Easier to spot patterns in late-night sleep times
- *    - Y-axis becomes less intuitive with hours > 24
- *    - May confuse users initially
- * 
- * 2. Data Storage:
- *    + Simpler queries - no need to join across days
- *    - Requires preprocessing of timestamps
- *    - Makes raw data less intuitive to read
- * 
- * 3. Edge Cases:
- *    - Cannot handle sleep periods longer than 12 hours
- *    - Assumes sleep always starts after 6PM and ends before 6PM next day
- *    - Multiple sleep sessions in one day may not be represented accurately
- */
-
-import { format, addHours } from 'date-fns';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 
 // --- Types ---
 export interface DailyLog {
@@ -40,7 +13,7 @@ export interface ProcessedData {
 
 export interface CustomTooltipProps {
   active?: boolean;
-  payload?: any[];
+  payload?: { value: number | string; name: string }[];
   label?: string;
 }
 
@@ -55,26 +28,22 @@ export const EVENT_COLORS = {
 export type EventType = keyof typeof EVENT_COLORS;
 
 // --- Constants ---
+export const TIMEZONE = 'Australia/Melbourne';
 export const DAY_PIVOT_HOUR = 18; // 6PM - Starting point for a "day"
 export const HOURS_IN_DAY = 24;
 
 // --- Time Utilities ---
 export const normalizeHour = (dateStr: string) => {
-  const date = new Date(dateStr);
-  const hour = date.getHours();
-  const minutes = date.getMinutes() / 60;
+  const melbourneDate = toZonedTime(dateStr, TIMEZONE);
+  const hour = melbourneDate.getHours();
+  const minutes = melbourneDate.getMinutes() / 60;
   
-  // If time is between midnight and 6AM, add 24 to make it continuous with previous evening
-  if (hour < DAY_PIVOT_HOUR - HOURS_IN_DAY) {
+  // If time is between midnight and 6PM, add 24 to make it continuous with previous evening
+  if (hour < DAY_PIVOT_HOUR) {
     return hour + HOURS_IN_DAY + minutes;
   }
   
-  // If time is between 6PM and midnight, keep as is
-  if (hour >= DAY_PIVOT_HOUR) {
-    return hour + minutes;
-  }
-  
-  // Regular daytime hours
+  // Regular hours (6PM to midnight)
   return hour + minutes;
 };
 
@@ -106,23 +75,35 @@ export const generateYAxisTicks = () => {
 
 export const processEventData = (events: DailyLog[]): ProcessedData[] => {
   const dailyData = events.reduce((acc: { [key: string]: ProcessedData }, event) => {
-    const eventDate = new Date(event.created_at);
-    const normalizedHour = normalizeHour(event.created_at);
+    // Convert UTC time to Melbourne time
+    const melbourneDate = toZonedTime(event.created_at, TIMEZONE);
+    const hour = melbourneDate.getHours();
     
-    // If time is after midnight but before pivot, count it as previous day
-    const date = normalizedHour >= HOURS_IN_DAY 
-      ? format(addHours(eventDate, -HOURS_IN_DAY), 'yyyy-MM-dd')
-      : format(eventDate, 'yyyy-MM-dd');
+    // Calculate normalized hour in Melbourne time
+    const normalizedHour = hour + (melbourneDate.getMinutes() / 60);
+    
+    // For sleep events:
+    // - If time is between midnight and 6PM, count it as previous day's sleep
+    const shouldAdjustDate = event.event_type === 'asleep' && hour < DAY_PIVOT_HOUR;
+    const adjustedDate = shouldAdjustDate
+      ? new Date(melbourneDate.getTime() - 24 * 60 * 60 * 1000)  // Subtract 24 hours
+      : melbourneDate;
+    
+    // Get Melbourne date string for the adjusted date
+    const date = formatInTimeZone(adjustedDate, TIMEZONE, 'yyyy-MM-dd');
 
     if (!acc[date]) {
       acc[date] = { date };
     }
 
-    acc[date][event.event_type] = normalizedHour;
+    // Store the normalized hour
+    const adjustedHour = shouldAdjustDate ? normalizedHour + HOURS_IN_DAY : normalizedHour;
+    acc[date][event.event_type] = adjustedHour;
+
     return acc;
   }, {});
 
-  return Object.values(dailyData).sort((a, b) => 
+  return Object.values(dailyData).sort((a, b) =>
     new Date(a.date).getTime() - new Date(b.date).getTime()
   );
 };

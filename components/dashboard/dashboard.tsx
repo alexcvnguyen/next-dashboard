@@ -26,11 +26,16 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   return (
     <div className="bg-white p-2 border border-gray-200 rounded shadow-sm">
       <p className="font-medium">{label}</p>
-      {payload.map((item: any, index: number) => (
-        <p key={index} style={{ color: item.color }}>
-          {`${item.name}: ${formatTimeToAMPM(item.value)}`}
-        </p>
-      ))}
+      {payload.map((item: any, index: number) => {
+        const value = item.value;
+        const isNextDay = value >= HOURS_IN_DAY;
+        return (
+          <p key={index} style={{ color: item.color }}>
+            {`${item.name}: ${formatTimeToAMPM(value)}`}
+            {isNextDay && ' (next day)'}
+          </p>
+        );
+      })}
     </div>
   );
 };
