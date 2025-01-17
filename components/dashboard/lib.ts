@@ -6,6 +6,12 @@ export interface DailyLog {
   event_type: string;
 }
 
+export interface JournalEntry {
+  created_at: string;
+  mood_score: number;
+  energy_score: number;
+}
+
 export interface ProcessedData {
   date: string;
   [key: string]: string | number | null;
@@ -22,7 +28,9 @@ export const EVENT_COLORS = {
   asleep: '#82ca9d',
   work_start: '#ffc658',
   work_end: '#ff7300',
-  journal_start: '#00C49F'
+  journal_start: '#00C49F',
+  mood_score: '#FF69B4',
+  energy_score: '#4169E1'
 } as const;
 
 export type EventType = keyof typeof EVENT_COLORS;
@@ -106,4 +114,123 @@ export const processEventData = (events: DailyLog[]): ProcessedData[] => {
   return Object.values(dailyData).sort((a, b) =>
     new Date(a.date).getTime() - new Date(b.date).getTime()
   );
+};
+
+// --- Analytics Utilities ---
+export interface AnalyticsResult {
+  correlation: number;
+  averageScore: number;
+  sampleSize: number;
+  insight: string;
+}
+
+export const analyzeEventScoreRelationship = (
+  data: ProcessedData[],
+  eventType: EventType,
+  scoreType: 'mood_score' | 'energy_score',
+  earlyThreshold: number
+): AnalyticsResult => {
+  // Filter data points where both event and score exist
+  const validData = data.filter(d => 
+    d[eventType] !== null && 
+    d[scoreType] !== null &&
+    // Ensure we're only analyzing full days where we have both event and score
+    typeof d[eventType] === 'number' &&
+    typeof d[scoreType] === 'number'
+  );
+
+  if (validData.length < 3) {
+    return {
+      correlation: 0,
+      averageScore: 0,
+      sampleSize: validData.length,
+      insight: 'Not enough data for analysis'
+    };
+  }
+
+  // Split into early vs late groups based on Melbourne time
+  const earlyDays = validData.filter(d => {
+    const eventTime = Number(d[eventType]);
+    // Normalize the time to be within 0-24 range for comparison
+    const normalizedTime = eventTime >= HOURS_IN_DAY ? eventTime - HOURS_IN_DAY : eventTime;
+    return normalizedTime <= (earlyThreshold - DAY_PIVOT_HOUR);
+  });
+  const lateDays = validData.filter(d => !earlyDays.includes(d));
+
+  // Calculate averages
+  const earlyAvg = earlyDays.length > 0
+    ? earlyDays.reduce((sum, d) => sum + Number(d[scoreType]), 0) / earlyDays.length
+    : 0;
+  const lateAvg = lateDays.length > 0
+    ? lateDays.reduce((sum, d) => sum + Number(d[scoreType]), 0) / lateDays.length
+    : 0;
+
+  // Calculate correlation using normalized times
+  const times = validData.map(d => {
+    const time = Number(d[eventType]);
+    return time >= HOURS_IN_DAY ? time - HOURS_IN_DAY : time;
+  });
+  const scores = validData.map(d => Number(d[scoreType]));
+  const correlation = calculateCorrelation(times, scores);
+
+  // Generate insight
+  const scoreDiff = earlyAvg - lateAvg;
+  const eventName = eventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+  const normalizedThreshold = earlyThreshold - DAY_PIVOT_HOUR;
+  
+  let insight = '';
+  if (Math.abs(correlation) < 0.1) {
+    insight = `No significant relationship found between ${eventName} time and ${scoreTypeName}.`;
+  } else {
+    const betterTime = scoreDiff > 0 ? 'earlier' : 'later';
+    const worseTime = scoreDiff > 0 ? 'later' : 'earlier';
+    const threshold = formatTimeToAMPM(normalizedThreshold);
+    const betterAvg = (betterTime === 'earlier' ? earlyAvg : lateAvg).toFixed(1);
+    const worseAvg = (betterTime === 'earlier' ? lateAvg : earlyAvg).toFixed(1);
+    
+    insight = `When you ${eventName} ${betterTime} (${betterTime === 'earlier' ? 'before' : 'after'} ${threshold}), ` +
+      `your ${scoreTypeName} averages ${Math.abs(scoreDiff).toFixed(1)} points higher ` +
+      `(${betterAvg} vs ${worseAvg}). ` +
+      `${eventName === 'work start' ? 'Starting work' : eventName === 'awake' ? 'Waking up' : 'Going to sleep'} ` +
+      `${worseTime} is associated with lower scores.`;
+  }
+
+  return {
+    correlation,
+    averageScore: earlyAvg,
+    sampleSize: validData.length,
+    insight
+  };
+};
+
+// Helper function to calculate correlation coefficient
+const calculateCorrelation = (x: number[], y: number[]): number => {
+  const n = x.length;
+  const sum1 = x.reduce((a, b) => a + b) * y.reduce((a, b) => a + b);
+  const sum2 = x.reduce((a, b) => a + b * b) * y.reduce((a, b) => a + b * b);
+  const sum3 = x.map((_, i) => x[i] * y[i]).reduce((a, b) => a + b);
+  return (n * sum3 - sum1) / Math.sqrt((n * sum2 - sum1 * sum1));
+};
+
+// Calculate average time for an event
+export const calculateAverageTime = (data: ProcessedData[], eventType: EventType): number | null => {
+  const validTimes = data
+    .filter(d => d[eventType] !== null && typeof d[eventType] === 'number')
+    .map(d => {
+      const time = Number(d[eventType]);
+      
+      // For sleep events, if the time is after midnight but before the day pivot,
+      // it should be counted as part of the previous day's sleep
+      if (eventType === 'asleep' && time < DAY_PIVOT_HOUR) {
+        return time + HOURS_IN_DAY;
+      }
+      
+      return time;
+    });
+
+  if (validTimes.length === 0) return null;
+
+  const avgTime = validTimes.reduce((sum, time) => sum + time, 0) / validTimes.length;
+  return avgTime;
 };
