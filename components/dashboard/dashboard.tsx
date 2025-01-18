@@ -70,7 +70,7 @@ export function Dashboard() {
   const [sleepData, setSleepData] = useState<SleepData[]>([]);
   const [timeRange, setTimeRange] = useState('14');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['mood_score', 'energy_score']);
-  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>([ ]);
+  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>(['core', 'rem', 'deep']);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -405,7 +405,7 @@ export function Dashboard() {
         </CardHeader>
         <CardContent className="p-2">
           <div className="flex flex-wrap gap-4 mb-4">
-            {[].map((metric) => (
+            {['core', 'rem', 'deep'].map((metric) => (
               <div key={metric} className="flex items-center space-x-2">
                 <Checkbox
                   id={`sleep-${metric}`}
