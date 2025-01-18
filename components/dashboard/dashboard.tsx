@@ -70,7 +70,7 @@ export function Dashboard() {
   const [sleepData, setSleepData] = useState<SleepData[]>([]);
   const [timeRange, setTimeRange] = useState('14');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['mood_score', 'energy_score']);
-  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>(['core', 'rem', 'deep']);
+  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>([]);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -404,30 +404,6 @@ export function Dashboard() {
           <CardTitle>Sleep Timeline</CardTitle>
         </CardHeader>
         <CardContent className="p-2">
-          <div className="flex flex-wrap gap-4 mb-4">
-            {['core', 'rem', 'deep'].map((metric) => (
-              <div key={metric} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`sleep-${metric}`}
-                  checked={selectedSleepMetrics.includes(metric as EventType)}
-                  onCheckedChange={() => {
-                    setSelectedSleepMetrics(prev => 
-                      prev.includes(metric as EventType)
-                        ? prev.filter(m => m !== metric)
-                        : [...prev, metric as EventType]
-                    );
-                  }}
-                />
-                <label
-                  htmlFor={`sleep-${metric}`}
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                  style={{ color: EVENT_COLORS[metric as EventType] }}
-                >
-                  {metric.toUpperCase()}
-                </label>
-              </div>
-            ))}
-          </div>
 
           <div className="w-full h-[60vh] min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
