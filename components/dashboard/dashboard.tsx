@@ -22,6 +22,15 @@ import {
   TIMEZONE,
   calculateAverageTime
 } from './lib';
+
+interface Workout {
+  id: string;
+  workout_type: string;
+  start_time: string;
+  duration: string; // PostgreSQL interval comes as a string like '1 hour 30 minutes'
+  total_energy_kj: string;
+  distance_km: string | null;
+}
 import { Insights } from './insights';
 
 // Custom tooltip type
@@ -56,11 +65,12 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
 export function Dashboard() {
   // --- State ---
   const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
-  const [timeRange, setTimeRange] = useState('60');
-  const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['awake', 'asleep', 'mood_score', 'energy_score']);
+  const [timeRange, setTimeRange] = useState('14');
+  const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['mood_score', 'energy_score']);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
 
   // Get moving average window size based on time range
   const getMovingAverageWindow = (days: number) => {
@@ -102,6 +112,14 @@ export function Dashboard() {
         setLoading(true);
         setError(null);
         const startDate = format(subDays(new Date(), parseInt(timeRange)), 'yyyy-MM-dd');
+
+        // Fetch workouts
+        const workoutData = await fetchSupabase('workouts', {
+          select: '*',
+          start_time: `gte.${startDate}`,
+          order: 'start_time.desc'
+        });
+        setWorkouts(workoutData);
         
         // Fetch daily logs
         const events = await fetchSupabase('daily_log', {
@@ -335,8 +353,8 @@ export function Dashboard() {
         <CardHeader>
           <CardTitle>Daily Timeline</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="h-80 chart-container">
+        <CardContent className="p-2">
+          <div className="w-full h-[60vh] min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={enhancedTimelineData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -374,6 +392,180 @@ export function Dashboard() {
         </CardHeader>
         <CardContent>
           <Insights data={timelineData} averages={averages} />
+        </CardContent>
+      </Card>
+
+      {/* Workouts Section */}
+      <Card className="card">
+        <CardHeader>
+          <CardTitle>Workouts</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* Group workouts by type and show stats */}
+          <div className="space-y-6">
+            {/* Group workouts by type */}
+            {Object.entries(
+              workouts.reduce((acc, workout) => {
+                const type = ['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(workout.workout_type) 
+                  ? workout.workout_type 
+                  : 'Other Exercises';
+                if (!acc[type]) {
+                  acc[type] = [];
+                }
+                acc[type].push(workout);
+                return acc;
+              }, {} as { [key: string]: Workout[] })
+            )
+            .sort(([a], [b]) => {
+              const sortOrder = ['Outdoor Walk', 'Outdoor Run', 'Indoor Run', 'Other Exercises'];
+              return sortOrder.indexOf(a) - sortOrder.indexOf(b);
+            })
+            .map(([type, typeWorkouts]) => {
+              // Calculate averages
+              const avgDuration = typeWorkouts.reduce((total, w) => {
+                if (!w.duration) return total;
+                const [hours, minutes, seconds] = w.duration.split(':').map(Number);
+                return total + (hours * 60) + minutes + (seconds / 60);
+              }, 0) / typeWorkouts.length;
+
+              const avgDistance = typeWorkouts.reduce((total, w) => 
+                total + (w.distance_km ? parseFloat(w.distance_km) : 0), 0
+              ) / typeWorkouts.length;
+
+              const avgEnergy = typeWorkouts.reduce((total, w) => 
+                total + (parseFloat(w.total_energy_kj) / 4.184), 0
+              ) / typeWorkouts.length;
+
+              // Prepare chart data
+              const chartData = typeWorkouts
+                .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                .map(w => ({
+                  date: format(new Date(w.start_time), 'MMM d'),
+                  duration: (() => {
+                    const [hours, minutes, seconds] = w.duration.split(':').map(Number);
+                    return (hours * 60) + minutes + (seconds / 60);
+                  })(),
+                  distance: w.distance_km ? parseFloat(w.distance_km) : 0,
+                  energy: parseFloat(w.total_energy_kj) / 4.184
+                }));
+
+              return (
+                <div key={type} className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>{type}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-2">
+                      <div className={`grid grid-cols-1 ${['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4 mb-6`}>
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm">Total Workouts</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-xl font-bold">{typeWorkouts.length}</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm">Avg Duration</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-xl font-bold">{avgDuration.toFixed(0)} mins</p>
+                          </CardContent>
+                        </Card>
+                        {['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) && (
+                          <Card>
+                            <CardHeader>
+                              <CardTitle className="text-sm">Avg Distance</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <p className="text-xl font-bold">{avgDistance.toFixed(2)} km</p>
+                            </CardContent>
+                          </Card>
+                        )}
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm">Avg Energy</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-xl font-bold">{avgEnergy.toFixed(0)} kcal</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      {/* Only show trend chart for running/walking activities */}
+                      {['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) && (
+                        <div className="w-full h-[40vh] min-h-[240px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="date" 
+                                tick={{ fontSize: 12 }}
+                              />
+                              <YAxis 
+                                yAxisId="duration"
+                                tick={{ fontSize: 12 }}
+                                label={{ value: 'Duration (mins)', angle: -90, position: 'insideLeft' }}
+                              />
+                              <YAxis 
+                                yAxisId="distance"
+                                orientation="right"
+                                tick={{ fontSize: 12 }}
+                                label={{ value: 'Distance (km)', angle: 90, position: 'insideRight' }}
+                              />
+                              <Tooltip />
+                              <Legend />
+                              <Line 
+                                type="monotone" 
+                                dataKey="duration" 
+                                stroke="#8884d8" 
+                                yAxisId="duration"
+                                name="Duration"
+                              />
+                              <Line 
+                                type="monotone" 
+                                dataKey="distance" 
+                                stroke="#82ca9d" 
+                                yAxisId="distance"
+                                name="Distance"
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Recent workouts list */}
+                      <div className="mt-6 space-y-4">
+                        <h4 className="font-semibold">recent {type === 'Other Exercises' ? 'Workouts' : `${type} workouts`}</h4>
+                        {typeWorkouts.slice(0, type === 'Other Exercises' ? 5 : 3).map((workout) => (
+                          <Card key={workout.id} className="p-4">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                {type === 'Other Exercises' && (
+                                  <p className="font-medium text-sm">{workout.workout_type}</p>
+                                )}
+                                <p className="text-sm text-muted-foreground">
+                                  {format(new Date(workout.start_time), 'MMM d, yyyy h:mm a')}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm">Duration: {workout.duration}</p>
+                                {['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) && workout.distance_km && (
+                                  <p className="text-sm">Distance: {parseFloat(workout.distance_km).toFixed(2)} km</p>
+                                )}
+                                <p className="text-sm">Energy: {(parseFloat(workout.total_energy_kj) / 4.184).toFixed(0)} kcal</p>
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
     </div>
