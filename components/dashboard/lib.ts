@@ -13,6 +13,15 @@ export interface JournalEntry {
   energy_score: number;
 }
 
+export interface SleepData {
+  date: string;
+  asleep: number;
+  awake: number;
+  core: number;
+  rem: number;
+  deep: number;
+}
+
 export interface ProcessedData {
   date: string;
   [key: string]: string | number | null;
@@ -27,6 +36,9 @@ export interface CustomTooltipProps {
 export const EVENT_COLORS = {
   awake: '#8884d8',
   asleep: '#82ca9d',
+  core: '#ffc658',
+  rem: '#ff7300',
+  deep: '#00C49F',
   work_start: '#ffc658',
   work_end: '#ff7300',
   journal_start: '#00C49F',
@@ -80,6 +92,32 @@ export const generateYAxisTicks = () => {
     ticks.push(i);
   }
   return ticks;
+};
+
+interface RawSleepData {
+  'Date/Time': string;
+  Start: string;
+  End: string;
+  Core: string;
+  REM: string;
+  Deep: string;
+}
+
+export const processSleepData = (sleepData: RawSleepData[]): SleepData[] => {
+  return sleepData.map(entry => {
+    const date = formatInTimeZone(toZonedTime(entry['Date/Time'], TIMEZONE), TIMEZONE, 'yyyy-MM-dd');
+    const startHour = normalizeHour(entry.Start);
+    const endHour = normalizeHour(entry.End);
+    
+    return {
+      date,
+      asleep: startHour,
+      awake: endHour,
+      core: parseFloat(entry.Core),
+      rem: parseFloat(entry.REM),
+      deep: parseFloat(entry.Deep)
+    };
+  }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 };
 
 export const processEventData = (events: DailyLog[]): ProcessedData[] => {

@@ -20,7 +20,9 @@ import {
   processEventData,
   JournalEntry,
   TIMEZONE,
-  calculateAverageTime
+  calculateAverageTime,
+  SleepData,
+  processSleepData
 } from './lib';
 
 interface Workout {
@@ -65,8 +67,10 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
 export function Dashboard() {
   // --- State ---
   const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
+  const [sleepData, setSleepData] = useState<SleepData[]>([]);
   const [timeRange, setTimeRange] = useState('14');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['mood_score', 'energy_score']);
+  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>([ ]);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +116,15 @@ export function Dashboard() {
         setLoading(true);
         setError(null);
         const startDate = format(subDays(new Date(), parseInt(timeRange)), 'yyyy-MM-dd');
+
+        // Fetch sleep data
+        const sleepExportData = await fetchSupabase('sleep_export', {
+          select: '*',
+          created_at: `gte.${startDate}`,
+          order: 'created_at.desc'
+        });
+        const processedSleepData = processSleepData(sleepExportData);
+        setSleepData(processedSleepData);
 
         // Fetch workouts
         const workoutData = await fetchSupabase('workouts', {
@@ -348,7 +361,7 @@ export function Dashboard() {
         ))}
       </div>
 
-      {/* Timeline Chart */}
+      {/* Daily Timeline */}
       <Card className="card">
         <CardHeader>
           <CardTitle>Daily Timeline</CardTitle>
@@ -379,6 +392,94 @@ export function Dashboard() {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
                 {chartLines}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sleep Timeline */}
+      <Card className="card">
+        <CardHeader>
+          <CardTitle>Sleep Timeline</CardTitle>
+        </CardHeader>
+        <CardContent className="p-2">
+          <div className="flex flex-wrap gap-4 mb-4">
+            {[].map((metric) => (
+              <div key={metric} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`sleep-${metric}`}
+                  checked={selectedSleepMetrics.includes(metric as EventType)}
+                  onCheckedChange={() => {
+                    setSelectedSleepMetrics(prev => 
+                      prev.includes(metric as EventType)
+                        ? prev.filter(m => m !== metric)
+                        : [...prev, metric as EventType]
+                    );
+                  }}
+                />
+                <label
+                  htmlFor={`sleep-${metric}`}
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  style={{ color: EVENT_COLORS[metric as EventType] }}
+                >
+                  {metric.toUpperCase()}
+                </label>
+              </div>
+            ))}
+          </div>
+
+          <div className="w-full h-[60vh] min-h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={sleepData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="date" 
+                  tick={{ fontSize: 12 }}
+                  interval={Math.floor(sleepData.length / 7)}
+                />
+                <YAxis 
+                  yAxisId="time"
+                  domain={[DAY_PIVOT_HOUR, DAY_PIVOT_HOUR + HOURS_IN_DAY]}
+                  ticks={generateYAxisTicks()}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => formatTimeToAMPM(value).split(' ')[0]}
+                />
+                <YAxis 
+                  yAxisId="duration"
+                  orientation="right"
+                  domain={[0, 10]}
+                  tick={{ fontSize: 12 }}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend />
+                <Line 
+                  type="monotone" 
+                  dataKey="asleep" 
+                  stroke={EVENT_COLORS.asleep}
+                  name="Sleep Start"
+                  yAxisId="time"
+                  dot={{ r: 2, fill: EVENT_COLORS.asleep, strokeWidth: 1, fillOpacity: 0.6 }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="awake" 
+                  stroke={EVENT_COLORS.awake}
+                  name="Wake Up"
+                  yAxisId="time"
+                  dot={{ r: 2, fill: EVENT_COLORS.awake, strokeWidth: 1, fillOpacity: 0.6 }}
+                />
+                {selectedSleepMetrics.map((metric) => (
+                  <Line 
+                    key={metric}
+                    type="monotone" 
+                    dataKey={metric.toLowerCase()}
+                    stroke={EVENT_COLORS[metric]}
+                    name={`${metric.toUpperCase()} Sleep`}
+                    yAxisId="duration"
+                    dot={{ r: 2, fill: EVENT_COLORS[metric], strokeWidth: 1, fillOpacity: 0.6 }}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
