@@ -257,7 +257,7 @@ export function Dashboard() {
 
   // --- Render ---
   return (
-    <div className="max-w-[1400px] mx-auto p-6 space-y-6">
+    <div className="max-w-[1000px] mx-auto p-6 space-y-6">
       {/* Header Section */}
       <div className="dashboard-header flex justify-between items-center">
         <div>
