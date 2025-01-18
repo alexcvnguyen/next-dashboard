@@ -70,7 +70,6 @@ export function Dashboard() {
   const [sleepData, setSleepData] = useState<SleepData[]>([]);
   const [timeRange, setTimeRange] = useState('14');
   const [selectedEvents, setSelectedEvents] = useState<EventType[]>(['mood_score', 'energy_score']);
-  const [selectedSleepMetrics, setSelectedSleepMetrics] = useState<EventType[]>([]);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -445,17 +444,6 @@ export function Dashboard() {
                   yAxisId="time"
                   dot={{ r: 2, fill: EVENT_COLORS.awake, strokeWidth: 1, fillOpacity: 0.6 }}
                 />
-                {selectedSleepMetrics.map((metric) => (
-                  <Line 
-                    key={metric}
-                    type="monotone" 
-                    dataKey={metric.toLowerCase()}
-                    stroke={EVENT_COLORS[metric]}
-                    name={`${metric.toUpperCase()} Sleep`}
-                    yAxisId="duration"
-                    dot={{ r: 2, fill: EVENT_COLORS[metric], strokeWidth: 1, fillOpacity: 0.6 }}
-                  />
-                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
