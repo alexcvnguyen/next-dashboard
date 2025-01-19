@@ -264,7 +264,7 @@ export function Insights({ data, averages }: InsightsProps) {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Previous Night's Sleep & Mood
+              Previous Night&apos;s Sleep & Mood
               {prevDaySleepAndMood.correlationStrength !== 'negligible' && (
                 <span className={`text-sm px-2 py-1 rounded ${
                   prevDaySleepAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -296,7 +296,7 @@ export function Insights({ data, averages }: InsightsProps) {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Previous Night's Sleep & Energy
+              Previous Night&apos;s Sleep & Energy
               {prevDaySleepAndEnergy.correlationStrength !== 'negligible' && (
                 <span className={`text-sm px-2 py-1 rounded ${
                   prevDaySleepAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -328,7 +328,7 @@ export function Insights({ data, averages }: InsightsProps) {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Previous Day's Work End & Mood
+              Previous Day&apos;s Work End & Mood
               {prevDayWorkEndAndMood.correlationStrength !== 'negligible' && (
                 <span className={`text-sm px-2 py-1 rounded ${
                   prevDayWorkEndAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -360,7 +360,7 @@ export function Insights({ data, averages }: InsightsProps) {
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Previous Day's Work End & Energy
+              Previous Day&apos;s Work End & Energy
               {prevDayWorkEndAndEnergy.correlationStrength !== 'negligible' && (
                 <span className={`text-sm px-2 py-1 rounded ${
                   prevDayWorkEndAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
