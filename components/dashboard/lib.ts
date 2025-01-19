@@ -245,14 +245,12 @@ export const analyzeEventScoreRelationship = (
     typeof d[scoreType] === 'number'
   );
 
-  console.log(`Valid data points for ${eventType} and ${scoreType}: ${validData.length}`);
-
   if (validData.length < 3) {
     return {
       correlation: 0,
       averageScore: 0,
       sampleSize: validData.length,
-      insight: 'Not enough data for analysis',
+      insight: 'Not enough data yet. Keep logging your daily activities to see patterns emerge.',
       pValue: null,
       effectSize: null,
       standardDev: null,
@@ -274,24 +272,13 @@ export const analyzeEventScoreRelationship = (
       // For other events, just normalize to 0-24 range
       normalizedTime = eventTime >= HOURS_IN_DAY ? eventTime - HOURS_IN_DAY : eventTime;
     }
-    const isEarly = normalizedTime <= (earlyThreshold - DAY_PIVOT_HOUR);
-    console.log(`Event time: ${eventTime}, Normalized: ${normalizedTime}, Threshold: ${earlyThreshold - DAY_PIVOT_HOUR}, Is Early: ${isEarly}`);
-    return isEarly;
+    return normalizedTime <= (earlyThreshold - DAY_PIVOT_HOUR);
   });
   const lateDays = validData.filter(d => !earlyDays.includes(d));
 
-  console.log(`Early days: ${earlyDays.length}, Late days: ${lateDays.length}`);
-
-  // Common variables used throughout the analysis
-  const eventName = eventType.replace('_', ' ');
-  const scoreTypeName = scoreType.replace('_', ' ');
-
-  // Calculate averages with better handling of empty groups
+  // Calculate averages
   const earlyScores = earlyDays.map(d => Number(d[scoreType]));
   const lateScores = lateDays.map(d => Number(d[scoreType]));
-
-  console.log('Early scores:', earlyScores);
-  console.log('Late scores:', lateScores);
 
   const earlyAvg = earlyScores.length > 0
     ? earlyScores.reduce((sum, score) => sum + score, 0) / earlyScores.length
@@ -300,15 +287,13 @@ export const analyzeEventScoreRelationship = (
     ? lateScores.reduce((sum, score) => sum + score, 0) / lateScores.length
     : null;
 
-  console.log(`Early average: ${earlyAvg}, Late average: ${lateAvg}`);
-
   // If either group has no data, we can't make a meaningful comparison
   if (earlyAvg === null || lateAvg === null) {
     return {
       correlation: 0,
       averageScore: earlyAvg ?? lateAvg ?? 0,
       sampleSize: validData.length,
-      insight: `Not enough data to compare early vs late ${eventName} times.`,
+      insight: `Need more varied timing data to analyze the impact of ${eventType.replace('_', ' ')} times.`,
       pValue: null,
       effectSize: null,
       standardDev: null,
@@ -323,7 +308,6 @@ export const analyzeEventScoreRelationship = (
   });
   const scores = validData.map(d => Number(d[scoreType]));
   
-  // Ensure we have valid data for correlation
   const correlation = times.length >= 2 ? calculateCorrelation(times, scores) : 0;
   const correlationStrength = getCorrelationStrength(correlation);
   
@@ -333,7 +317,7 @@ export const analyzeEventScoreRelationship = (
 
   try {
     if (earlyScores.length >= 2 && lateScores.length >= 2) {
-      // @ts-expect-error - simple-statistics type definition is incorrect, it actually accepts arrays
+      // @ts-expect-error - simple-statistics type definition is incorrect
       const tTestResult = tTest(earlyScores, lateScores);
       pValue = tTestResult;
       effectSize = calculateEffectSize(earlyScores, lateScores);
@@ -346,25 +330,39 @@ export const analyzeEventScoreRelationship = (
   // Generate insight
   const scoreDiff = earlyAvg - lateAvg;
   const normalizedThreshold = earlyThreshold - DAY_PIVOT_HOUR;
+  const timeStr = formatTimeToAMPM(normalizedThreshold);
   
   let insight = '';
+  const eventName = eventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+
   if (Math.abs(correlation) < 0.1 || isNaN(correlation)) {
-    insight = `No clear relationship found between ${eventName} time and ${scoreTypeName}.`;
+    insight = `Your ${scoreTypeName} doesn't seem to be affected by ${eventName} timing. ` +
+      `This suggests you may have flexibility in when you ${eventName}.`;
   } else {
     const betterTime = scoreDiff > 0 ? 'earlier' : 'later';
-    const threshold = formatTimeToAMPM(normalizedThreshold);
+    const difference = Math.abs(scoreDiff).toFixed(1);
     const betterAvg = (betterTime === 'earlier' ? earlyAvg : lateAvg).toFixed(1);
     const worseAvg = (betterTime === 'earlier' ? lateAvg : earlyAvg).toFixed(1);
 
-    // Add group sizes to the insight
-    const earlyCount = earlyScores.length;
-    const lateCount = lateScores.length;
-    
-    insight = `When you ${eventName} ${betterTime} (${betterTime === 'earlier' ? 'before' : 'after'} ${threshold}), ` +
-      `your ${scoreTypeName} averages ${Math.abs(scoreDiff).toFixed(1)} points higher ` +
-      `(${betterAvg} vs ${worseAvg}, based on ${earlyCount} early vs ${lateCount} late days). ` +
-      `This shows a ${correlationStrength} relationship (r=${correlation.toFixed(2)})` +
-      `${pValue !== null && pValue < 0.05 ? ' and is statistically significant' : ''}.`;
+    // Add statistical significance and confidence level
+    let confidencePhrase = '';
+    if (pValue !== null && effectSize !== null) {
+      if (pValue < 0.01 && effectSize > 0.8) {
+        confidencePhrase = 'There is very strong evidence that ';
+      } else if (pValue < 0.05 && effectSize > 0.5) {
+        confidencePhrase = 'There is strong evidence that ';
+      } else if (pValue < 0.1 && effectSize > 0.2) {
+        confidencePhrase = 'There is some evidence that ';
+      }
+    }
+
+    insight = `${confidencePhrase}${eventName === 'asleep' ? 'going to bed' : eventName} ${betterTime} ` +
+      `than ${timeStr} tends to boost your ${scoreTypeName} by ${difference} points ` +
+      `(averaging ${betterAvg} vs ${worseAvg}). ` +
+      (effectSize !== null && effectSize > 0.5 ? 
+        `This is a substantial difference that you may want to consider in your daily planning.` : 
+        `While the difference is modest, it might be worth keeping in mind.`);
   }
 
   return {
@@ -435,7 +433,7 @@ export const processLocationData = (locationLogs: LocationLog[]): DailyLocationS
     new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
-  sortedLogs.forEach((log, index) => {
+  sortedLogs.forEach(log => {
     const melbourneDate = toZonedTime(log.created_at, TIMEZONE);
     const date = formatInTimeZone(melbourneDate, TIMEZONE, 'yyyy-MM-dd');
     
@@ -466,4 +464,448 @@ export const calculateAverageTimeOutside = (data: DailyLocationStats[]): number 
   if (data.length === 0) return 0;
   const total = data.reduce((sum, day) => sum + day.timeOutside, 0);
   return Number((total / data.length).toFixed(2));
+};
+
+// Helper function to analyze duration impact on scores
+export const analyzeDurationImpact = (
+  data: ProcessedData[],
+  startEventType: EventType,
+  endEventType: EventType,
+  scoreType: 'mood_score' | 'energy_score',
+  durationThreshold: number
+): AnalyticsResult => {
+  // Filter data points where we have all required fields
+  const validData = data.filter(d => 
+    d[startEventType] !== null && 
+    d[endEventType] !== null && 
+    d[scoreType] !== null &&
+    typeof d[startEventType] === 'number' &&
+    typeof d[endEventType] === 'number' &&
+    typeof d[scoreType] === 'number'
+  );
+
+  if (validData.length < 3) {
+    return {
+      correlation: 0,
+      averageScore: 0,
+      sampleSize: validData.length,
+      insight: 'Not enough data yet to analyze duration patterns.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Calculate durations
+  const dataWithDurations = validData.map(d => {
+    const startTime = Number(d[startEventType]);
+    let endTime = Number(d[endEventType]);
+    
+    // Handle cases where end time is on the next day
+    if (endTime < startTime) {
+      endTime += HOURS_IN_DAY;
+    }
+    
+    return {
+      duration: endTime - startTime,
+      score: Number(d[scoreType])
+    };
+  });
+
+  // Split into short vs long duration groups
+  const shortDuration = dataWithDurations.filter(d => d.duration <= durationThreshold);
+  const longDuration = dataWithDurations.filter(d => d.duration > durationThreshold);
+
+  const shortScores = shortDuration.map(d => d.score);
+  const longScores = longDuration.map(d => d.score);
+
+  const shortAvg = shortScores.length > 0 
+    ? shortScores.reduce((sum, score) => sum + score, 0) / shortScores.length 
+    : null;
+  const longAvg = longScores.length > 0
+    ? longScores.reduce((sum, score) => sum + score, 0) / longScores.length
+    : null;
+
+  if (shortAvg === null || longAvg === null) {
+    return {
+      correlation: 0,
+      averageScore: shortAvg ?? longAvg ?? 0,
+      sampleSize: validData.length,
+      insight: 'Need more varied duration data for analysis.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Calculate correlation between duration and scores
+  const durations = dataWithDurations.map(d => d.duration);
+  const scores = dataWithDurations.map(d => d.score);
+  
+  const correlation = calculateCorrelation(durations, scores);
+  const correlationStrength = getCorrelationStrength(correlation);
+
+  let pValue = null;
+  let effectSize = null;
+  let standardDev = null;
+
+  try {
+    if (shortScores.length >= 2 && longScores.length >= 2) {
+      // @ts-expect-error - simple-statistics type definition is incorrect
+      const tTestResult = tTest(shortScores, longScores);
+      pValue = tTestResult;
+      effectSize = calculateEffectSize(shortScores, longScores);
+    }
+    standardDev = scores.length >= 2 ? standardDeviation(scores) : null;
+  } catch (error) {
+    console.error('Error calculating statistics:', error);
+  }
+
+  // Generate insight
+  const scoreDiff = shortAvg - longAvg;
+  const activityName = startEventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+  const durationStr = durationThreshold.toFixed(1);
+
+  let insight = '';
+  if (Math.abs(correlation) < 0.1 || isNaN(correlation)) {
+    insight = `Your ${scoreTypeName} doesn't seem to be affected by how long you spend on ${activityName}. ` +
+      `This suggests you might have good stamina for this activity.`;
+  } else {
+    const betterDuration = scoreDiff > 0 ? 'shorter' : 'longer';
+    const difference = Math.abs(scoreDiff).toFixed(1);
+    const betterAvg = (scoreDiff > 0 ? shortAvg : longAvg).toFixed(1);
+    const worseAvg = (scoreDiff > 0 ? longAvg : shortAvg).toFixed(1);
+
+    let confidencePhrase = '';
+    if (pValue !== null && effectSize !== null) {
+      if (pValue < 0.01 && effectSize > 0.8) {
+        confidencePhrase = 'There is very strong evidence that ';
+      } else if (pValue < 0.05 && effectSize > 0.5) {
+        confidencePhrase = 'There is strong evidence that ';
+      } else if (pValue < 0.1 && effectSize > 0.2) {
+        confidencePhrase = 'There is some evidence that ';
+      }
+    }
+
+    insight = `${confidencePhrase}${betterDuration} ${activityName} sessions (${
+      betterDuration === 'shorter' ? 'under' : 'over'
+    } ${durationStr} hours) tend to boost your ${scoreTypeName} by ${difference} points ` +
+      `(averaging ${betterAvg} vs ${worseAvg}). ` +
+      (effectSize !== null && effectSize > 0.5 ? 
+        `This is a substantial effect you may want to consider when planning your day.` : 
+        `While the effect is modest, it might be worth keeping in mind.`);
+  }
+
+  return {
+    correlation,
+    averageScore: shortAvg,
+    sampleSize: validData.length,
+    insight,
+    pValue,
+    effectSize,
+    standardDev,
+    correlationStrength
+  };
+};
+
+// Helper to analyze sequential events impact
+export const analyzeSequentialEvents = (
+  data: ProcessedData[],
+  firstEventType: EventType,
+  secondEventType: EventType,
+  scoreType: 'mood_score' | 'energy_score',
+  gapThreshold: number
+): AnalyticsResult => {
+  // Filter data points where we have all required fields
+  const validData = data.filter(d => 
+    d[firstEventType] !== null && 
+    d[secondEventType] !== null && 
+    d[scoreType] !== null &&
+    typeof d[firstEventType] === 'number' &&
+    typeof d[secondEventType] === 'number' &&
+    typeof d[scoreType] === 'number'
+  );
+
+  if (validData.length < 3) {
+    return {
+      correlation: 0,
+      averageScore: 0,
+      sampleSize: validData.length,
+      insight: 'Not enough data yet to analyze event sequence patterns.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Calculate gaps between events
+  const dataWithGaps = validData.map(d => {
+    const firstTime = Number(d[firstEventType]);
+    let secondTime = Number(d[secondEventType]);
+    
+    // Handle cases where second event is on the next day
+    if (secondTime < firstTime) {
+      secondTime += HOURS_IN_DAY;
+    }
+    
+    return {
+      gap: secondTime - firstTime,
+      score: Number(d[scoreType])
+    };
+  });
+
+  // Split into short vs long gap groups
+  const shortGap = dataWithGaps.filter(d => d.gap <= gapThreshold);
+  const longGap = dataWithGaps.filter(d => d.gap > gapThreshold);
+
+  const shortScores = shortGap.map(d => d.score);
+  const longScores = longGap.map(d => d.score);
+
+  const shortAvg = shortScores.length > 0 
+    ? shortScores.reduce((sum, score) => sum + score, 0) / shortScores.length 
+    : null;
+  const longAvg = longScores.length > 0
+    ? longScores.reduce((sum, score) => sum + score, 0) / longScores.length
+    : null;
+
+  if (shortAvg === null || longAvg === null) {
+    return {
+      correlation: 0,
+      averageScore: shortAvg ?? longAvg ?? 0,
+      sampleSize: validData.length,
+      insight: 'Need more varied timing data for sequence analysis.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Calculate correlation between gaps and scores
+  const gaps = dataWithGaps.map(d => d.gap);
+  const scores = dataWithGaps.map(d => d.score);
+  
+  const correlation = calculateCorrelation(gaps, scores);
+  const correlationStrength = getCorrelationStrength(correlation);
+
+  let pValue = null;
+  let effectSize = null;
+  let standardDev = null;
+
+  try {
+    if (shortScores.length >= 2 && longScores.length >= 2) {
+      // @ts-expect-error - simple-statistics type definition is incorrect
+      const tTestResult = tTest(shortScores, longScores);
+      pValue = tTestResult;
+      effectSize = calculateEffectSize(shortScores, longScores);
+    }
+    standardDev = scores.length >= 2 ? standardDeviation(scores) : null;
+  } catch (error) {
+    console.error('Error calculating statistics:', error);
+  }
+
+  // Generate insight
+  const scoreDiff = shortAvg - longAvg;
+  const firstEventName = firstEventType.replace('_', ' ');
+  const secondEventName = secondEventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+  const gapStr = gapThreshold.toFixed(1);
+
+  let insight = '';
+  if (Math.abs(correlation) < 0.1 || isNaN(correlation)) {
+    insight = `The time gap between your ${firstEventName} and ${secondEventName} doesn't seem to affect your ${scoreTypeName}. ` +
+      `This suggests you have flexibility in scheduling these activities.`;
+  } else {
+    const betterGap = scoreDiff > 0 ? 'shorter' : 'longer';
+    const difference = Math.abs(scoreDiff).toFixed(1);
+    const betterAvg = (scoreDiff > 0 ? shortAvg : longAvg).toFixed(1);
+    const worseAvg = (scoreDiff > 0 ? longAvg : shortAvg).toFixed(1);
+
+    let confidencePhrase = '';
+    if (pValue !== null && effectSize !== null) {
+      if (pValue < 0.01 && effectSize > 0.8) {
+        confidencePhrase = 'There is very strong evidence that ';
+      } else if (pValue < 0.05 && effectSize > 0.5) {
+        confidencePhrase = 'There is strong evidence that ';
+      } else if (pValue < 0.1 && effectSize > 0.2) {
+        confidencePhrase = 'There is some evidence that ';
+      }
+    }
+
+    insight = `${confidencePhrase}having a ${betterGap} gap (${
+      betterGap === 'shorter' ? 'under' : 'over'
+    } ${gapStr} hours) between ${firstEventName} and ${secondEventName} tends to boost your ${scoreTypeName} by ${difference} points ` +
+      `(averaging ${betterAvg} vs ${worseAvg}). ` +
+      (effectSize !== null && effectSize > 0.5 ? 
+        `This is a substantial pattern worth considering in your schedule.` : 
+        `While the effect is modest, it might help optimize your routine.`);
+  }
+
+  return {
+    correlation,
+    averageScore: shortAvg,
+    sampleSize: validData.length,
+    insight,
+    pValue,
+    effectSize,
+    standardDev,
+    correlationStrength
+  };
+};
+
+// Helper to analyze how previous day's events affect next day's scores
+export const analyzePreviousDayImpact = (
+  data: ProcessedData[],
+  eventType: EventType,
+  scoreType: 'mood_score' | 'energy_score',
+  threshold: number
+): AnalyticsResult => {
+  // Create a map of dates to their data for easy lookup
+  const dateMap = data.reduce((acc, d) => {
+    acc[d.date] = d;
+    return acc;
+  }, {} as { [key: string]: ProcessedData });
+
+  // For each day's score, look at previous day's event
+  const validPairs = Object.entries(dateMap).reduce((acc: Array<{
+    prevDayEvent: number,
+    nextDayScore: number
+  }>, [date, dayData]) => {
+    const prevDate = new Date(date);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = formatInTimeZone(prevDate, TIMEZONE, 'yyyy-MM-dd');
+    const prevDayData = dateMap[prevDateStr];
+
+    if (prevDayData && 
+        prevDayData[eventType] !== null && 
+        dayData[scoreType] !== null &&
+        typeof prevDayData[eventType] === 'number' &&
+        typeof dayData[scoreType] === 'number') {
+      acc.push({
+        prevDayEvent: Number(prevDayData[eventType]),
+        nextDayScore: Number(dayData[scoreType])
+      });
+    }
+    return acc;
+  }, []);
+
+  if (validPairs.length < 3) {
+    return {
+      correlation: 0,
+      averageScore: 0,
+      sampleSize: validPairs.length,
+      insight: 'Not enough consecutive days of data to analyze patterns.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Split into early vs late groups based on threshold
+  const earlyGroup = validPairs.filter(p => {
+    let normalizedTime = p.prevDayEvent;
+    // Normalize times after midnight
+    if (normalizedTime < DAY_PIVOT_HOUR) {
+      normalizedTime += HOURS_IN_DAY;
+    }
+    return normalizedTime <= threshold;
+  });
+  const lateGroup = validPairs.filter(p => !earlyGroup.includes(p));
+
+  const earlyScores = earlyGroup.map(p => p.nextDayScore);
+  const lateScores = lateGroup.map(p => p.nextDayScore);
+
+  const earlyAvg = earlyScores.length > 0
+    ? earlyScores.reduce((sum, score) => sum + score, 0) / earlyScores.length
+    : null;
+  const lateAvg = lateScores.length > 0
+    ? lateScores.reduce((sum, score) => sum + score, 0) / lateScores.length
+    : null;
+
+  if (earlyAvg === null || lateAvg === null) {
+    return {
+      correlation: 0,
+      averageScore: earlyAvg ?? lateAvg ?? 0,
+      sampleSize: validPairs.length,
+      insight: 'Need more varied timing data to analyze patterns.',
+      pValue: null,
+      effectSize: null,
+      standardDev: null,
+      correlationStrength: 'insufficient data'
+    };
+  }
+
+  // Calculate correlation
+  const times = validPairs.map(p => p.prevDayEvent);
+  const scores = validPairs.map(p => p.nextDayScore);
+  
+  const correlation = calculateCorrelation(times, scores);
+  const correlationStrength = getCorrelationStrength(correlation);
+
+  let pValue = null;
+  let effectSize = null;
+  let standardDev = null;
+
+  try {
+    if (earlyScores.length >= 2 && lateScores.length >= 2) {
+      // @ts-expect-error - simple-statistics type definition is incorrect
+      const tTestResult = tTest(earlyScores, lateScores);
+      pValue = tTestResult;
+      effectSize = calculateEffectSize(earlyScores, lateScores);
+    }
+    standardDev = scores.length >= 2 ? standardDeviation(scores) : null;
+  } catch (error) {
+    console.error('Error calculating statistics:', error);
+  }
+
+  // Generate insight
+  const scoreDiff = earlyAvg - lateAvg;
+  const eventName = eventType.replace('_', ' ');
+  const scoreTypeName = scoreType.replace('_', ' ');
+  const timeStr = formatTimeToAMPM(threshold - DAY_PIVOT_HOUR);
+
+  let insight = '';
+  if (Math.abs(correlation) < 0.1 || isNaN(correlation)) {
+    insight = `Your next-day ${scoreTypeName} doesn't seem to be affected by when you ${eventName} the previous evening. ` +
+      `This suggests you might be adaptable to different evening schedules.`;
+  } else {
+    const betterTime = scoreDiff > 0 ? 'earlier' : 'later';
+    const difference = Math.abs(scoreDiff).toFixed(1);
+    const betterAvg = (scoreDiff > 0 ? earlyAvg : lateAvg).toFixed(1);
+    const worseAvg = (scoreDiff > 0 ? lateAvg : earlyAvg).toFixed(1);
+
+    let confidencePhrase = '';
+    if (pValue !== null && effectSize !== null) {
+      if (pValue < 0.01 && effectSize > 0.8) {
+        confidencePhrase = 'There is very strong evidence that ';
+      } else if (pValue < 0.05 && effectSize > 0.5) {
+        confidencePhrase = 'There is strong evidence that ';
+      } else if (pValue < 0.1 && effectSize > 0.2) {
+        confidencePhrase = 'There is some evidence that ';
+      }
+    }
+
+    insight = `${confidencePhrase}when you ${eventName} ${betterTime} than ${timeStr} in the evening, ` +
+      `your next morning's ${scoreTypeName} tends to be ${difference} points higher ` +
+      `(averaging ${betterAvg} vs ${worseAvg}). ` +
+      (effectSize !== null && effectSize > 0.5 ? 
+        `This suggests your evening routine has a substantial impact on how you feel the next day.` : 
+        `While the effect is modest, adjusting your evening schedule might help improve your mornings.`);
+  }
+
+  return {
+    correlation,
+    averageScore: earlyAvg,
+    sampleSize: validPairs.length,
+    insight,
+    pValue,
+    effectSize,
+    standardDev,
+    correlationStrength
+  };
 };

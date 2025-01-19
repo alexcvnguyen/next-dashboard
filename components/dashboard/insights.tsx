@@ -4,7 +4,8 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { 
   ProcessedData, 
-  analyzeEventScoreRelationship, 
+  analyzeEventScoreRelationship,
+  analyzePreviousDayImpact,
   DAY_PIVOT_HOUR,
   HOURS_IN_DAY,
   formatTimeToAMPM,
@@ -29,21 +30,21 @@ const THRESHOLDS: Record<string, ThresholdConfig> = {
     min: DAY_PIVOT_HOUR + 4, // 4AM
     max: DAY_PIVOT_HOUR + 10, // 10AM
     default: DAY_PIVOT_HOUR + 6, // 6AM
-    label: 'Early wake threshold',
+    label: 'Wake-up time threshold',
     eventType: 'awake'
   },
   work: {
     min: DAY_PIVOT_HOUR + 6, // 6AM
     max: DAY_PIVOT_HOUR + 12, // 12PM
     default: DAY_PIVOT_HOUR + 8, // 8AM
-    label: 'Early work threshold',
+    label: 'Work start time threshold',
     eventType: 'work_start'
   },
   sleep: {
     min: DAY_PIVOT_HOUR + 20, // 8PM
     max: DAY_PIVOT_HOUR + 26, // 2AM next day
     default: DAY_PIVOT_HOUR + 22, // 10PM
-    label: 'Early sleep threshold',
+    label: 'Bedtime threshold',
     eventType: 'asleep'
   }
 };
@@ -70,6 +71,21 @@ const parseTimeToHour = (timeStr: string, eventType: EventType): number | null =
   
   // For all other times, just adjust for day pivot
   return time + DAY_PIVOT_HOUR;
+};
+
+// Helper to get descriptive text for threshold impact
+const getThresholdDescription = (config: ThresholdConfig, value: number) => {
+  const timeStr = formatTimeToAMPM(value - DAY_PIVOT_HOUR);
+  switch (config.eventType) {
+    case 'awake':
+      return `Days when you wake up before ${timeStr} will be considered "early wake-ups"`;
+    case 'work_start':
+      return `Days when you start work before ${timeStr} will be considered "early starts"`;
+    case 'asleep':
+      return `Days when you go to bed before ${timeStr} will be considered "early bedtimes"`;
+    default:
+      return '';
+  }
 };
 
 export function Insights({ data, averages }: InsightsProps) {
@@ -100,8 +116,12 @@ export function Insights({ data, averages }: InsightsProps) {
   // Analyze relationships between different events and scores
   const wakeAndMood = analyzeEventScoreRelationship(data, 'awake', 'mood_score', wakeThreshold);
   const wakeAndEnergy = analyzeEventScoreRelationship(data, 'awake', 'energy_score', wakeThreshold);
-  const workAndMood = analyzeEventScoreRelationship(data, 'work_start', 'mood_score', workThreshold);
-  const sleepAndEnergy = analyzeEventScoreRelationship(data, 'asleep', 'energy_score', sleepThreshold);
+  
+  // Analyze how previous day's events affect today's scores
+  const prevDaySleepAndMood = analyzePreviousDayImpact(data, 'asleep', 'mood_score', sleepThreshold);
+  const prevDaySleepAndEnergy = analyzePreviousDayImpact(data, 'asleep', 'energy_score', sleepThreshold);
+  const prevDayWorkEndAndMood = analyzePreviousDayImpact(data, 'work_end', 'mood_score', DAY_PIVOT_HOUR + 19); // 7PM
+  const prevDayWorkEndAndEnergy = analyzePreviousDayImpact(data, 'work_end', 'energy_score', DAY_PIVOT_HOUR + 19);
 
   const renderThresholdControl = (
     config: ThresholdConfig,
@@ -120,31 +140,39 @@ export function Insights({ data, averages }: InsightsProps) {
     };
 
     return (
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-600">{config.label}</span>
-          <div className="flex items-center gap-2">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={handleAverageClick}
-              disabled={typeof avgTimeStr !== 'string' || avgTimeStr === '-'}
-            >
-              Average
-            </Button>
-            <span className="text-sm font-medium min-w-[80px] text-right">
-              {formatTimeToAMPM(value - DAY_PIVOT_HOUR)}
-            </span>
+      <div className="space-y-4 p-4 border rounded-lg bg-gray-50/80 backdrop-blur-sm hover:bg-gray-50 transition-colors">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+            <div className="flex-1">
+              <h3 className="font-medium text-gray-900">{config.label}</h3>
+              <p className="text-sm text-gray-600 mt-1 pr-4">
+                {getThresholdDescription(config, value)}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 self-start sm:self-center">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleAverageClick}
+                disabled={typeof avgTimeStr !== 'string' || avgTimeStr === '-'}
+                className="whitespace-nowrap text-xs"
+              >
+                Set to Average
+              </Button>
+              <span className="text-sm font-medium min-w-[80px] text-right">
+                {formatTimeToAMPM(value - DAY_PIVOT_HOUR)}
+              </span>
+            </div>
           </div>
+          <Slider
+            value={[value]}
+            min={config.min}
+            max={config.max}
+            step={0.5}
+            onValueChange={onChange}
+            className="w-full"
+          />
         </div>
-        <Slider
-          value={[value]}
-          min={config.min}
-          max={config.max}
-          step={0.5}
-          onValueChange={onChange}
-          className="w-full"
-        />
       </div>
     );
   };
@@ -153,10 +181,14 @@ export function Insights({ data, averages }: InsightsProps) {
     <div className="space-y-6">
       {/* Threshold Controls */}
       <Card>
-        <CardHeader>
-          <CardTitle>Analysis Thresholds</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-lg font-semibold">Analysis Settings</CardTitle>
+          <p className="text-sm text-gray-600 mt-1">
+            Adjust these thresholds to analyze how different timing patterns affect your mood and energy.
+            The analysis compares days when you perform activities before vs. after these times.
+          </p>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="p-4 md:p-6 space-y-4">
           {renderThresholdControl(THRESHOLDS.wake, wakeThreshold, ([v]) => setWakeThreshold(v))}
           {renderThresholdControl(THRESHOLDS.work, workThreshold, ([v]) => setWorkThreshold(v))}
           {renderThresholdControl(THRESHOLDS.sleep, sleepThreshold, ([v]) => setSleepThreshold(v))}
@@ -165,88 +197,192 @@ export function Insights({ data, averages }: InsightsProps) {
 
       {/* Insights Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+        <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
-            <CardTitle>Wake Time & Mood</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Wake Time & Mood
+              {wakeAndMood.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  wakeAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {wakeAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{wakeAndMood.insight}</p>
             <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Sample size: {wakeAndMood.sampleSize} days</p>
+              <p>Based on {wakeAndMood.sampleSize} days of data</p>
               {wakeAndMood.standardDev !== null && (
-                <p>Variability (SD): ±{wakeAndMood.standardDev.toFixed(1)} points</p>
+                <p>Day-to-day variation: ±{wakeAndMood.standardDev.toFixed(1)} points</p>
               )}
-              {wakeAndMood.effectSize !== null && (
-                <p>Effect size (Cohen&apos;s d): {wakeAndMood.effectSize.toFixed(2)} 
-                  {wakeAndMood.effectSize > 0.8 ? ' (large)' : 
-                   wakeAndMood.effectSize > 0.5 ? ' (medium)' : 
-                   wakeAndMood.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+              {wakeAndMood.effectSize !== null && wakeAndMood.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    wakeAndMood.effectSize > 0.8 ? 'very strong' : 
+                    wakeAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your mood
                 </p>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
-            <CardTitle>Wake Time & Energy</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Wake Time & Energy
+              {wakeAndEnergy.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  wakeAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {wakeAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600">{wakeAndEnergy.insight}</p>
             <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Sample size: {wakeAndEnergy.sampleSize} days</p>
+              <p>Based on {wakeAndEnergy.sampleSize} days of data</p>
               {wakeAndEnergy.standardDev !== null && (
-                <p>Variability (SD): ±{wakeAndEnergy.standardDev.toFixed(1)} points</p>
+                <p>Day-to-day variation: ±{wakeAndEnergy.standardDev.toFixed(1)} points</p>
               )}
-              {wakeAndEnergy.effectSize !== null && (
-                <p>Effect size (Cohen&apos;s d): {wakeAndEnergy.effectSize.toFixed(2)}
-                  {wakeAndEnergy.effectSize > 0.8 ? ' (large)' : 
-                   wakeAndEnergy.effectSize > 0.5 ? ' (medium)' : 
-                   wakeAndEnergy.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+              {wakeAndEnergy.effectSize !== null && wakeAndEnergy.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    wakeAndEnergy.effectSize > 0.8 ? 'very strong' : 
+                    wakeAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your energy
                 </p>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
-            <CardTitle>Work Start Time & Mood</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Previous Night's Sleep & Mood
+              {prevDaySleepAndMood.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  prevDaySleepAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {prevDaySleepAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600">{workAndMood.insight}</p>
+            <p className="text-sm text-gray-600">{prevDaySleepAndMood.insight}</p>
             <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Sample size: {workAndMood.sampleSize} days</p>
-              {workAndMood.standardDev !== null && (
-                <p>Variability (SD): ±{workAndMood.standardDev.toFixed(1)} points</p>
+              <p>Based on {prevDaySleepAndMood.sampleSize} days of data</p>
+              {prevDaySleepAndMood.standardDev !== null && (
+                <p>Day-to-day variation: ±{prevDaySleepAndMood.standardDev.toFixed(1)} points</p>
               )}
-              {workAndMood.effectSize !== null && (
-                <p>Effect size (Cohen&apos;s d): {workAndMood.effectSize.toFixed(2)}
-                  {workAndMood.effectSize > 0.8 ? ' (large)' : 
-                   workAndMood.effectSize > 0.5 ? ' (medium)' : 
-                   workAndMood.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+              {prevDaySleepAndMood.effectSize !== null && prevDaySleepAndMood.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    prevDaySleepAndMood.effectSize > 0.8 ? 'very strong' : 
+                    prevDaySleepAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your mood
                 </p>
               )}
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-lg transition-shadow">
           <CardHeader>
-            <CardTitle>Sleep Time & Energy</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Previous Night's Sleep & Energy
+              {prevDaySleepAndEnergy.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  prevDaySleepAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {prevDaySleepAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600">{sleepAndEnergy.insight}</p>
+            <p className="text-sm text-gray-600">{prevDaySleepAndEnergy.insight}</p>
             <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Sample size: {sleepAndEnergy.sampleSize} days</p>
-              {sleepAndEnergy.standardDev !== null && (
-                <p>Variability (SD): ±{sleepAndEnergy.standardDev.toFixed(1)} points</p>
+              <p>Based on {prevDaySleepAndEnergy.sampleSize} days of data</p>
+              {prevDaySleepAndEnergy.standardDev !== null && (
+                <p>Day-to-day variation: ±{prevDaySleepAndEnergy.standardDev.toFixed(1)} points</p>
               )}
-              {sleepAndEnergy.effectSize !== null && (
-                <p>Effect size (Cohen&apos;s d): {sleepAndEnergy.effectSize.toFixed(2)}
-                  {sleepAndEnergy.effectSize > 0.8 ? ' (large)' : 
-                   sleepAndEnergy.effectSize > 0.5 ? ' (medium)' : 
-                   sleepAndEnergy.effectSize > 0.2 ? ' (small)' : ' (minimal)'}
+              {prevDaySleepAndEnergy.effectSize !== null && prevDaySleepAndEnergy.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    prevDaySleepAndEnergy.effectSize > 0.8 ? 'very strong' : 
+                    prevDaySleepAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your energy
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="hover:shadow-lg transition-shadow">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Previous Day's Work End & Mood
+              {prevDayWorkEndAndMood.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  prevDayWorkEndAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {prevDayWorkEndAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">{prevDayWorkEndAndMood.insight}</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Based on {prevDayWorkEndAndMood.sampleSize} days of data</p>
+              {prevDayWorkEndAndMood.standardDev !== null && (
+                <p>Day-to-day variation: ±{prevDayWorkEndAndMood.standardDev.toFixed(1)} points</p>
+              )}
+              {prevDayWorkEndAndMood.effectSize !== null && prevDayWorkEndAndMood.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    prevDayWorkEndAndMood.effectSize > 0.8 ? 'very strong' : 
+                    prevDayWorkEndAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your mood
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="hover:shadow-lg transition-shadow">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Previous Day's Work End & Energy
+              {prevDayWorkEndAndEnergy.correlationStrength !== 'negligible' && (
+                <span className={`text-sm px-2 py-1 rounded ${
+                  prevDayWorkEndAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {prevDayWorkEndAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">{prevDayWorkEndAndEnergy.insight}</p>
+            <div className="mt-4 space-y-2 text-xs text-gray-500">
+              <p>Based on {prevDayWorkEndAndEnergy.sampleSize} days of data</p>
+              {prevDayWorkEndAndEnergy.standardDev !== null && (
+                <p>Day-to-day variation: ±{prevDayWorkEndAndEnergy.standardDev.toFixed(1)} points</p>
+              )}
+              {prevDayWorkEndAndEnergy.effectSize !== null && prevDayWorkEndAndEnergy.effectSize > 0.2 && (
+                <p className="text-sm font-medium text-gray-700">
+                  This pattern shows a {
+                    prevDayWorkEndAndEnergy.effectSize > 0.8 ? 'very strong' : 
+                    prevDayWorkEndAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
+                  } effect on your energy
                 </p>
               )}
             </div>

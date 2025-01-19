@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchSupabase } from '@/lib/supabase';
@@ -26,6 +26,7 @@ import {
   DailyLocationStats
 } from './lib';
 import { Social } from './social';
+import { Insights } from './insights';
 
 interface Workout {
   id: string;
@@ -35,7 +36,6 @@ interface Workout {
   total_energy_kj: string;
   distance_km: string | null;
 }
-import { Insights } from './insights';
 
 // Custom tooltip type
 interface TooltipPayloadItem {
@@ -140,19 +140,49 @@ export function Dashboard() {
     });
   };
 
-  // Memoize enhanced timeline data with moving averages
+  // Memoize enhanced timeline data with moving averages and durations
   const enhancedTimelineData = useMemo(() => {
     if (!timelineData.length) return timelineData;
 
     const data = [...timelineData];
     const allEvents = [...selectedEvents, 'work_start', 'work_end', 'journal_start'];
     
+    // Calculate durations
+    data.forEach(item => {
+      // Calculate journaling duration (journal_start to work_start)
+      if (item.journal_start !== null && item.work_start !== null) {
+        const journalStart = Number(item.journal_start);
+        const workStart = Number(item.work_start);
+        item.journaling_duration = workStart - journalStart;
+      }
+
+      // Calculate work duration (work_start to work_end)
+      if (item.work_start !== null && item.work_end !== null) {
+        const workStart = Number(item.work_start);
+        const workEnd = Number(item.work_end);
+        item.work_duration = workEnd - workStart;
+      }
+
+      // Calculate leisure duration (work_end to asleep)
+      if (item.work_end !== null && item.asleep !== null) {
+        const workEnd = Number(item.work_end);
+        let sleepTime = Number(item.asleep);
+        // Adjust sleep time if it's after midnight
+        if (sleepTime < DAY_PIVOT_HOUR) {
+          sleepTime += HOURS_IN_DAY;
+        }
+        item.leisure_duration = sleepTime - workEnd;
+      }
+    });
+
+    // Calculate moving averages for events
     allEvents.forEach(eventType => {
       const movingAverages = calculateMovingAverage(timelineData, eventType as keyof ProcessedData);
       data.forEach((item, index) => {
         item[`${eventType}_ma`] = movingAverages[index];
       });
     });
+
     return data;
   }, [selectedEvents, timelineData]);
 
@@ -168,9 +198,17 @@ export function Dashboard() {
         const sleepExportData = await fetchSupabase('sleep_export', {
           select: '*',
           created_at: `gte.${startDate}`,
-          order: 'created_at.desc'
+          order: 'created_at.asc'
         });
-        const processedSleepData = processSleepData(sleepExportData);
+        
+        // Process and filter sleep data for the selected time range
+        const processedSleepData = processSleepData(sleepExportData)
+          .filter(d => {
+            const date = new Date(d.date);
+            const start = new Date(startDate);
+            return date >= start;
+          })
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         
         // Add moving averages to sleep data
         const asleepMA = calculateMovingAverage(processedSleepData, 'asleep');
@@ -197,13 +235,15 @@ export function Dashboard() {
         // Fetch daily logs
         const events = await fetchSupabase('daily_log', {
           select: '*',
-          created_at: `gte.${startDate}`
+          created_at: `gte.${startDate}`,
+          order: 'created_at.asc'
         });
 
         // Fetch journal entries
         const journals = await fetchSupabase('journals', {
           select: '*',
-          created_at: `gte.${startDate}`
+          created_at: `gte.${startDate}`,
+          order: 'created_at.asc'
         });
 
         // Process daily logs
@@ -270,6 +310,21 @@ export function Dashboard() {
 
   const averages = calculateAverages();
 
+  // Calculate sleep averages based on the filtered data
+  const sleepAverages = useMemo(() => {
+    if (!sleepData.length) return { asleep: 0, awake: 0, duration: 0 };
+
+    const asleepSum = sleepData.reduce((sum, d) => sum + d.asleep, 0);
+    const awakeSum = sleepData.reduce((sum, d) => sum + d.awake, 0);
+    const durationSum = sleepData.reduce((sum, d) => sum + d.duration, 0);
+
+    return {
+      asleep: asleepSum / sleepData.length,
+      awake: awakeSum / sleepData.length,
+      duration: durationSum / sleepData.length
+    };
+  }, [sleepData]);
+
   // Calculate chart lines
   const chartLines = useMemo(() => {
     if (!timelineData.length) return [];
@@ -317,79 +372,86 @@ export function Dashboard() {
   // --- Loading & Error States ---
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="custom-loader rounded-full h-32 w-32 border-4"></div>
+      <div className="flex items-center justify-center min-h-screen bg-gray-50/30">
+        <div className="space-y-4 text-center">
+          <div className="custom-loader rounded-full h-16 w-16 border-4 border-primary/20 border-t-primary mx-auto"></div>
+          <p className="text-muted-foreground animate-pulse">Loading your insights...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-red-500">{error}</div>
+      <div className="flex items-center justify-center min-h-screen bg-gray-50/30">
+        <div className="text-red-500 bg-red-50 p-4 rounded-lg border border-red-200 shadow-sm">
+          <p className="font-medium">{error}</p>
+          <p className="text-sm text-red-400 mt-1">Please try refreshing the page</p>
+        </div>
       </div>
     );
   }
 
   // --- Render ---
   return (
-    <div className="max-w-[1000px] mx-auto p-6 space-y-6">
+    <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-6">
       {/* Header Section */}
-      <div className="dashboard-header flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Personal Insights</h1>
-          <p className="text-muted-foreground">Alex&apos;s daily patterns and wellness metrics</p>
-          <p className="text-muted-foreground">It&apos;s a mess, I know.</p>
-        </div>
-        <div className="flex gap-4 items-center">
-          <button
-            onClick={() => setShowRawData(!showRawData)}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              showRawData 
-                ? 'bg-gray-200 hover:bg-gray-300 text-gray-800' 
-                : 'bg-gray-800 hover:bg-gray-700 text-white'
-            }`}
-          >
-            {showRawData ? 'Show Smoothed' : 'Show Raw Data'}
-          </button>
-          <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="w-32 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white/95 transition-colors">
-              <SelectValue placeholder="Select range" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">7 days</SelectItem>
-              <SelectItem value="14">14 days</SelectItem>
-              <SelectItem value="30">30 days</SelectItem>
-              <SelectItem value="60">60 days</SelectItem>
-              <SelectItem value="90">90 days</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-lg border-b border-gray-100 -mx-4 px-4 py-3 md:-mx-6 md:px-6">
+        <div className="flex flex-row items-center justify-between gap-4 h-12">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold truncate">Personal Insights</h1>
+            <p className="text-xs text-muted-foreground truncate">Alex&apos;s daily patterns and wellness metrics</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowRawData(!showRawData)}
+              className={`px-3 py-1.5 rounded-lg transition-all duration-200 text-xs font-medium ${
+                showRawData 
+                  ? 'bg-gray-100 hover:bg-gray-200 text-gray-800' 
+                  : 'bg-gray-900 hover:bg-gray-800 text-white shadow-sm'
+              }`}
+            >
+              {showRawData ? 'Show Smoothed' : 'Show Raw Data'}
+            </button>
+            <Select value={timeRange} onValueChange={setTimeRange}>
+              <SelectTrigger className="h-8 w-24 text-xs bg-white shadow-sm border-gray-200 hover:border-gray-300 transition-colors">
+                <SelectValue placeholder="Select range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">7 days</SelectItem>
+                <SelectItem value="14">14 days</SelectItem>
+                <SelectItem value="30">30 days</SelectItem>
+                <SelectItem value="60">60 days</SelectItem>
+                <SelectItem value="90">90 days</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
       {/* Average Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         {selectedEvents.map(eventType => (
-          <Card key={eventType} className="card">
-            <CardHeader>
-              <CardTitle className="text-sm">
-                Avg {eventType.replace('_', ' ')}
+          <Card key={eventType} className="bg-white/50 backdrop-blur-sm hover:bg-white/80 transition-colors border-gray-100">
+            <CardHeader className="p-4">
+              <CardTitle className="text-sm font-medium text-gray-600">
+                Avg {eventType.split('_').join(' ')}
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <p className="text-xl font-bold">{averages[eventType]}</p>
+            <CardContent className="p-4 pt-0">
+              <p className="text-2xl font-bold text-gray-900">{averages[eventType]}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
       {/* Daily Timeline */}
-      <Card className="card">
-        <CardHeader>
-          <CardTitle>Daily Timeline</CardTitle>
+      <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-xl font-semibold">Daily Timeline</CardTitle>
         </CardHeader>
-        <CardContent className="p-2">
-          <div className="w-full h-[60vh] min-h-[300px]">
+        <CardContent className="p-2 md:p-4">
+          <div className="w-full h-[50vh] md:h-[60vh] min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={enhancedTimelineData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -417,42 +479,80 @@ export function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Daily Durations */}
+          <div className="w-full h-[25vh] md:h-[30vh] min-h-[200px] mt-6">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={enhancedTimelineData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="date" 
+                  tick={{ fontSize: 12 }}
+                  interval={Math.floor(timelineData.length / 7)}
+                />
+                <YAxis
+                  label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
+                  tick={{ fontSize: 12 }}
+                />
+                <Tooltip 
+                  formatter={(value: number) => `${value.toFixed(1)} hours`}
+                />
+                <Legend />
+                <Bar 
+                  dataKey="journaling_duration" 
+                  name="Journaling Time"
+                  fill={EVENT_COLORS.journal_start} 
+                  stackId="a"
+                />
+                <Bar 
+                  dataKey="work_duration" 
+                  name="Work Time"
+                  fill={EVENT_COLORS.work_start} 
+                  stackId="a"
+                />
+                <Bar 
+                  dataKey="leisure_duration" 
+                  name="Leisure Time"
+                  fill="#8884d8" 
+                  stackId="a"
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </CardContent>
       </Card>
 
       {/* Sleep Timeline */}
-      <Card className="card">
-        <CardHeader>
-          <CardTitle>Sleep Timeline Using Apple Health data</CardTitle>
+      <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-xl font-semibold">Sleep Insights</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">Tracking your sleep patterns using Apple Health data</p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {/* Average Time Cards */}
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Average Sleep Time</CardTitle>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6">
+            <Card className="bg-white/80 border-gray-100">
+              <CardHeader className="p-4">
+                <CardTitle className="text-sm font-medium text-gray-600">Average Sleep Time</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{formatTimeToAMPM(sleepData.reduce((sum, d) => sum + d.asleep, 0) / sleepData.length)}</p>
+              <CardContent className="p-4 pt-0">
+                <p className="text-2xl font-bold text-gray-900">{formatTimeToAMPM(sleepAverages.asleep)}</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Average Wake Time</CardTitle>
+            <Card className="bg-white/80 border-gray-100">
+              <CardHeader className="p-4">
+                <CardTitle className="text-sm font-medium text-gray-600">Average Wake Time</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{formatTimeToAMPM(sleepData.reduce((sum, d) => sum + d.awake, 0) / sleepData.length)}</p>
+              <CardContent className="p-4 pt-0">
+                <p className="text-2xl font-bold text-gray-900">{formatTimeToAMPM(sleepAverages.awake)}</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Average Duration</CardTitle>
+            <Card className="bg-white/80 border-gray-100">
+              <CardHeader className="p-4">
+                <CardTitle className="text-sm font-medium text-gray-600">Average Duration</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">
-                  {(sleepData.reduce((sum, d) => sum + (typeof d.duration === 'number' ? d.duration : 0), 0) / 
-                    sleepData.filter(d => typeof d.duration === 'number').length || 0).toFixed(1)} hrs
-                </p>
+              <CardContent className="p-4 pt-0">
+                <p className="text-2xl font-bold text-gray-900">{sleepAverages.duration.toFixed(1)} hrs</p>
               </CardContent>
             </Card>
           </div>
@@ -524,62 +624,50 @@ export function Dashboard() {
           {/* Sleep Duration Chart */}
           <div className="w-full h-[30vh] min-h-[150px] p-2">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={sleepData}>
+              <BarChart data={sleepData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="date" 
                   tick={{ fontSize: 12 }}
                   interval={Math.floor(sleepData.length / 7)}
                 />
-                <YAxis 
+                <YAxis
                   domain={[0, 12]}
                   tick={{ fontSize: 12 }}
                   label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
                 />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend />
-                {showRawData && (
-                  <Line 
-                    type="monotone" 
-                    dataKey="duration" 
-                    stroke={EVENT_COLORS.duration}
-                    name="Sleep Duration"
-                    dot={{ r: 2, fill: EVENT_COLORS.duration, strokeWidth: 1, fillOpacity: 0.6 }}
-                  />
-                )}
-                <Line 
-                  type="monotone" 
-                  dataKey="duration_ma"
-                  stroke={EVENT_COLORS.duration}
-                  dot={false}
-                  strokeDasharray={showRawData ? "5 5" : undefined}
-                  connectNulls
-                  name={showRawData ? undefined : "Sleep Duration"}
-                  legendType={showRawData ? "none" : undefined}
+                <Tooltip 
+                  formatter={(value: number) => `${value.toFixed(1)} hours`}
                 />
-              </LineChart>
+                <Legend />
+                <Bar 
+                  dataKey="duration" 
+                  fill={EVENT_COLORS.duration}
+                  name="Sleep Duration"
+                />
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
 
       {/* Insights Section */}
-      <Card className="card">
-        <CardHeader>
-          <CardTitle>Insights & Analysis</CardTitle>
+      <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-xl font-semibold">Insights & Analysis</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           <Insights data={timelineData} averages={averages} />
         </CardContent>
       </Card>
 
       {/* Workouts Section */}
-      <Card className="card">
-        <CardHeader>
-          <CardTitle>Workouts</CardTitle>
+      <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-xl font-semibold">Workouts</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">Track your fitness journey</p>
         </CardHeader>
-        <CardContent>
-          {/* Group workouts by type and show stats */}
+        <CardContent className="p-4 md:p-6">
           <div className="space-y-6">
             {/* Group workouts by type */}
             {Object.entries(
@@ -629,12 +717,12 @@ export function Dashboard() {
 
               return (
                 <div key={type} className="space-y-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>{type}</CardTitle>
+                  <Card className="bg-white/80 border-gray-100">
+                    <CardHeader className="p-4 md:p-6">
+                      <CardTitle className="text-lg font-semibold">{type}</CardTitle>
                     </CardHeader>
-                    <CardContent className="p-2">
-                      <div className={`grid grid-cols-1 ${['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4 mb-6`}>
+                    <CardContent className="p-4 md:p-6">
+                      <div className={`grid grid-cols-1 ${['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(type) ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'} gap-3 md:gap-4 mb-6`}>
                         <Card>
                           <CardHeader>
                             <CardTitle className="text-sm">Total Workouts</CardTitle>
@@ -747,8 +835,9 @@ export function Dashboard() {
         </CardContent>
       </Card>
 
-      <div>
-        <h2 className="text-2xl font-bold mb-4">Social</h2>
+      {/* Social Section */}
+      <div className="space-y-4">
+        <h2 className="text-2xl font-bold px-1">Social</h2>
         <Social locationData={locationData} />
       </div>
     </div>
