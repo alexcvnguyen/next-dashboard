@@ -810,9 +810,7 @@ export function Dashboard() {
                           <Card key={workout.id} className="p-4">
                             <div className="flex justify-between items-start">
                               <div>
-                                {type === 'Other Exercises' && (
-                                  <p className="font-medium text-sm">{workout.workout_type}</p>
-                                )}
+                                <p className="font-medium text-sm">{workout.workout_type}</p>
                                 <p className="text-sm text-muted-foreground">
                                   {format(new Date(workout.start_time), 'MMM d, yyyy h:mm a')}
                                 </p>
