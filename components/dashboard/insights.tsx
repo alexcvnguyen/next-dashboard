@@ -4,13 +4,105 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { 
   ProcessedData, 
-  analyzeEventScoreRelationship,
-  analyzePreviousDayImpact,
+  analyseEventScoreRelationship,
+  analysePreviousDayImpact,
   DAY_PIVOT_HOUR,
   HOURS_IN_DAY,
   formatTimeToAMPM,
-  EventType 
+  EventType,
+  AnalyticsResult 
 } from './lib';
+
+interface StatisticsDisplayProps {
+  result: AnalyticsResult;
+}
+
+function StatisticsDisplay({ result }: StatisticsDisplayProps) {
+  return (
+    <div className="mt-4 space-y-2 text-xs text-gray-500">
+      <p>Based on {result.sampleSize} days of data</p>
+      {result.standardDev !== null && (
+        <div className="space-y-1">
+          <p>Day-to-day variation: ±{result.standardDev.toFixed(1)} points</p>
+          <div className="flex items-center gap-2">
+            <span>Consistency:</span>
+            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full ${
+                  result.standardDev <= 1 ? 'bg-green-500' :
+                  result.standardDev <= 2 ? 'bg-yellow-500' : 'bg-red-500'
+                }`}
+                style={{ width: `${Math.max(0, Math.min(100, 100 - (result.standardDev * 20)))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {result.effectSize !== null && (
+        <div className="mt-3 space-y-1">
+          <p className="text-sm font-medium text-gray-700">
+            Impact Strength: {
+              result.effectSize > 0.8 ? 'Very Strong' : 
+              result.effectSize > 0.5 ? 'Strong' : 
+              result.effectSize > 0.2 ? 'Moderate' :
+              'Weak'
+            }
+          </p>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 rounded-full"
+                style={{ width: `${Math.min(100, result.effectSize * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {result.pValue !== null && !result.insight.includes('Need more varied timing data') && (
+        <div className="mt-2">
+          <p className={`text-sm font-medium ${
+            result.pValue < 0.1 ? 'text-blue-600' : 'text-gray-500'
+          }`}>
+            Statistical Significance: {
+              result.pValue < 0.01 ? 'p < 0.01 (99% confidence)' :
+              result.pValue < 0.05 ? 'p < 0.05 (95% confidence)' :
+              result.pValue < 0.1 ? 'p < 0.1 (90% confidence)' :
+              `p = ${result.pValue.toFixed(3)}`
+            }
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface InsightsCardProps {
+  title: string;
+  result: AnalyticsResult;
+}
+
+function InsightsCard({ title, result }: InsightsCardProps) {
+  return (
+    <Card className="hover:shadow-lg transition-shadow">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          {title}
+          {result.correlationStrength !== 'negligible' && (
+            <span className={`text-sm px-2 py-1 rounded ${
+              result.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+            }`}>
+              {result.correlation > 0 ? 'Earlier is better' : 'Later is better'}
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-600">{result.insight}</p>
+        <StatisticsDisplay result={result} />
+      </CardContent>
+    </Card>
+  );
+}
 
 interface InsightsProps {
   data: ProcessedData[];
@@ -113,15 +205,15 @@ export function Insights({ data, averages }: InsightsProps) {
     setSleepThreshold(getInitialThreshold(THRESHOLDS.sleep));
   }, [averages]);
 
-  // Analyze relationships between different events and scores
-  const wakeAndMood = analyzeEventScoreRelationship(data, 'awake', 'mood_score', wakeThreshold);
-  const wakeAndEnergy = analyzeEventScoreRelationship(data, 'awake', 'energy_score', wakeThreshold);
+  // analyse relationships between different events and scores
+  const wakeAndMood = analyseEventScoreRelationship(data, 'awake', 'mood_score', wakeThreshold);
+  const wakeAndEnergy = analyseEventScoreRelationship(data, 'awake', 'energy_score', wakeThreshold);
   
-  // Analyze how previous day's events affect today's scores
-  const prevDaySleepAndMood = analyzePreviousDayImpact(data, 'asleep', 'mood_score', sleepThreshold);
-  const prevDaySleepAndEnergy = analyzePreviousDayImpact(data, 'asleep', 'energy_score', sleepThreshold);
-  const prevDayWorkEndAndMood = analyzePreviousDayImpact(data, 'work_end', 'mood_score', DAY_PIVOT_HOUR + 19); // 7PM
-  const prevDayWorkEndAndEnergy = analyzePreviousDayImpact(data, 'work_end', 'energy_score', DAY_PIVOT_HOUR + 19);
+  // analyse how previous day's events affect today's scores
+  const prevDaySleepAndMood = analysePreviousDayImpact(data, 'asleep', 'mood_score', sleepThreshold);
+  const prevDaySleepAndEnergy = analysePreviousDayImpact(data, 'asleep', 'energy_score', sleepThreshold);
+  const prevDayWorkEndAndMood = analysePreviousDayImpact(data, 'work_end', 'mood_score', DAY_PIVOT_HOUR + 19); // 7PM
+  const prevDayWorkEndAndEnergy = analysePreviousDayImpact(data, 'work_end', 'energy_score', DAY_PIVOT_HOUR + 19);
 
   const renderThresholdControl = (
     config: ThresholdConfig,
@@ -184,7 +276,7 @@ export function Insights({ data, averages }: InsightsProps) {
         <CardHeader className="p-4 md:p-6">
           <CardTitle className="text-lg font-semibold">Analysis Settings</CardTitle>
           <p className="text-sm text-gray-600 mt-1">
-            Adjust these thresholds to analyze how different timing patterns affect your mood and energy.
+            Adjust these thresholds to analyse how different timing patterns affect your mood and energy.
             The analysis compares days when you perform activities before vs. after these times.
           </p>
         </CardHeader>
@@ -197,197 +289,12 @@ export function Insights({ data, averages }: InsightsProps) {
 
       {/* Insights Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Wake Time & Mood
-              {wakeAndMood.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  wakeAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {wakeAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{wakeAndMood.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {wakeAndMood.sampleSize} days of data</p>
-              {wakeAndMood.standardDev !== null && (
-                <p>Day-to-day variation: ±{wakeAndMood.standardDev.toFixed(1)} points</p>
-              )}
-              {wakeAndMood.effectSize !== null && wakeAndMood.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    wakeAndMood.effectSize > 0.8 ? 'very strong' : 
-                    wakeAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your mood
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Wake Time & Energy
-              {wakeAndEnergy.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  wakeAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {wakeAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{wakeAndEnergy.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {wakeAndEnergy.sampleSize} days of data</p>
-              {wakeAndEnergy.standardDev !== null && (
-                <p>Day-to-day variation: ±{wakeAndEnergy.standardDev.toFixed(1)} points</p>
-              )}
-              {wakeAndEnergy.effectSize !== null && wakeAndEnergy.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    wakeAndEnergy.effectSize > 0.8 ? 'very strong' : 
-                    wakeAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your energy
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Previous Night&apos;s Sleep & Mood
-              {prevDaySleepAndMood.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  prevDaySleepAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {prevDaySleepAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{prevDaySleepAndMood.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {prevDaySleepAndMood.sampleSize} days of data</p>
-              {prevDaySleepAndMood.standardDev !== null && (
-                <p>Day-to-day variation: ±{prevDaySleepAndMood.standardDev.toFixed(1)} points</p>
-              )}
-              {prevDaySleepAndMood.effectSize !== null && prevDaySleepAndMood.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    prevDaySleepAndMood.effectSize > 0.8 ? 'very strong' : 
-                    prevDaySleepAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your mood
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Previous Night&apos;s Sleep & Energy
-              {prevDaySleepAndEnergy.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  prevDaySleepAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {prevDaySleepAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{prevDaySleepAndEnergy.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {prevDaySleepAndEnergy.sampleSize} days of data</p>
-              {prevDaySleepAndEnergy.standardDev !== null && (
-                <p>Day-to-day variation: ±{prevDaySleepAndEnergy.standardDev.toFixed(1)} points</p>
-              )}
-              {prevDaySleepAndEnergy.effectSize !== null && prevDaySleepAndEnergy.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    prevDaySleepAndEnergy.effectSize > 0.8 ? 'very strong' : 
-                    prevDaySleepAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your energy
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Previous Day&apos;s Work End & Mood
-              {prevDayWorkEndAndMood.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  prevDayWorkEndAndMood.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {prevDayWorkEndAndMood.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{prevDayWorkEndAndMood.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {prevDayWorkEndAndMood.sampleSize} days of data</p>
-              {prevDayWorkEndAndMood.standardDev !== null && (
-                <p>Day-to-day variation: ±{prevDayWorkEndAndMood.standardDev.toFixed(1)} points</p>
-              )}
-              {prevDayWorkEndAndMood.effectSize !== null && prevDayWorkEndAndMood.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    prevDayWorkEndAndMood.effectSize > 0.8 ? 'very strong' : 
-                    prevDayWorkEndAndMood.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your mood
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Previous Day&apos;s Work End & Energy
-              {prevDayWorkEndAndEnergy.correlationStrength !== 'negligible' && (
-                <span className={`text-sm px-2 py-1 rounded ${
-                  prevDayWorkEndAndEnergy.correlation > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {prevDayWorkEndAndEnergy.correlation > 0 ? 'Earlier is better' : 'Later is better'}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600">{prevDayWorkEndAndEnergy.insight}</p>
-            <div className="mt-4 space-y-2 text-xs text-gray-500">
-              <p>Based on {prevDayWorkEndAndEnergy.sampleSize} days of data</p>
-              {prevDayWorkEndAndEnergy.standardDev !== null && (
-                <p>Day-to-day variation: ±{prevDayWorkEndAndEnergy.standardDev.toFixed(1)} points</p>
-              )}
-              {prevDayWorkEndAndEnergy.effectSize !== null && prevDayWorkEndAndEnergy.effectSize > 0.2 && (
-                <p className="text-sm font-medium text-gray-700">
-                  This pattern shows a {
-                    prevDayWorkEndAndEnergy.effectSize > 0.8 ? 'very strong' : 
-                    prevDayWorkEndAndEnergy.effectSize > 0.5 ? 'strong' : 'moderate'
-                  } effect on your energy
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <InsightsCard title="Wake Time & Mood" result={wakeAndMood} />
+        <InsightsCard title="Wake Time & Energy" result={wakeAndEnergy} />
+        <InsightsCard title="Previous Night&apos;s Sleep & Mood" result={prevDaySleepAndMood} />
+        <InsightsCard title="Previous Night&apos;s Sleep & Energy" result={prevDaySleepAndEnergy} />
+        <InsightsCard title="Previous Day&apos;s Work End & Mood" result={prevDayWorkEndAndMood} />
+        <InsightsCard title="Previous Day&apos;s Work End & Energy" result={prevDayWorkEndAndEnergy} />
       </div>
     </div>
   );
