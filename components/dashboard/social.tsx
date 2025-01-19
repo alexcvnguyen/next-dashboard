@@ -9,14 +9,21 @@ interface SocialProps {
   locationData: DailyLocationStats[];
 }
 
+interface TooltipPayloadItem {
+  value: string | number;
+  name: string;
+  stroke?: string;
+  color?: string;
+}
+
 const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
     <div className="bg-white/90 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-md">
       <p className="font-medium">{label}</p>
-      {payload.map((item, index) => (
-        <p key={index} style={{ color: item.stroke }}>
+      {payload.map((item: TooltipPayloadItem, index) => (
+        <p key={index} style={{ color: item.stroke || item.color }}>
           {`${item.name}: ${Number(item.value).toFixed(2)} hours`}
         </p>
       ))}
