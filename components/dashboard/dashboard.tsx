@@ -378,7 +378,7 @@ export function Dashboard() {
       <div className="flex items-center justify-center min-h-screen bg-gray-50/30">
         <div className="space-y-4 text-center">
           <div className="custom-loader rounded-full h-16 w-16 border-4 border-primary/20 border-t-primary mx-auto"></div>
-          <p className="text-muted-foreground animate-pulse">Loading your insights...</p>
+          <p className="text-muted-foreground animate-pulse">Loading insights...</p>
         </div>
       </div>
     );
@@ -530,7 +530,7 @@ export function Dashboard() {
       <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
         <CardHeader className="p-4 md:p-6">
           <CardTitle className="text-xl font-semibold">Sleep Insights</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">Tracking your sleep patterns using Apple Health data</p>
+          <p className="text-sm text-muted-foreground mt-1">Tracking sleep using Apple Health data</p>
         </CardHeader>
         <CardContent className="p-4 md:p-6">
           {/* Average Time Cards */}
@@ -667,7 +667,7 @@ export function Dashboard() {
       <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
         <CardHeader className="p-4 md:p-6">
           <CardTitle className="text-xl font-semibold">Workouts</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">Track your fitness journey</p>
+          <p className="text-sm text-muted-foreground mt-1">Tracking fitness using Apple Health data - dubious accuracy lol</p>
         </CardHeader>
         <CardContent className="p-4 md:p-6">
           <div className="space-y-6">
