@@ -11,6 +11,10 @@ export interface JournalEntry {
   created_at: string;
   mood_score: number;
   energy_score: number;
+  positive_feelings?: string[];
+  negative_feelings?: string[];
+  cognitive_states?: string[];
+  physical_states?: string[];
 }
 
 export interface SleepData extends ProcessedData {

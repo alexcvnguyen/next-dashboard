@@ -27,6 +27,7 @@ import {
 } from './lib';
 import { Social } from './social';
 import { Insights } from './insights';
+import { FeelingsChart } from './feelings-chart';
 
 interface Workout {
   id: string;
@@ -94,6 +95,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [locationData, setLocationData] = useState<DailyLocationStats[]>([]);
+  const [journals, setJournals] = useState<JournalEntry[]>([]);
 
   // Get moving average window size based on time range
   const getMovingAverageWindow = (days: number) => {
@@ -240,11 +242,12 @@ export function Dashboard() {
         });
 
         // Fetch journal entries
-        const journals = await fetchSupabase('journals', {
+        const journalData = await fetchSupabase('journals', {
           select: '*',
           created_at: `gte.${startDate}`,
           order: 'created_at.asc'
         });
+        setJournals(journalData);
 
         // Process daily logs
         const processedEvents = processEventData(events);
@@ -252,7 +255,7 @@ export function Dashboard() {
         // Process and merge journal data
         const mergedData = processedEvents.map(dayData => {
           const date = dayData.date;
-          const dayJournals = journals.filter((j: JournalEntry) => 
+          const dayJournals = journalData.filter((j: JournalEntry) => 
             formatInTimeZone(toZonedTime(j.created_at, TIMEZONE), TIMEZONE, 'yyyy-MM-dd') === date
           );
 
@@ -458,7 +461,6 @@ export function Dashboard() {
                 <XAxis 
                   dataKey="date" 
                   tick={{ fontSize: 12 }}
-                  interval={Math.floor(timelineData.length / 7)}
                 />
                 <YAxis 
                   yAxisId="time"
@@ -488,7 +490,6 @@ export function Dashboard() {
                 <XAxis 
                   dataKey="date" 
                   tick={{ fontSize: 12 }}
-                  interval={Math.floor(timelineData.length / 7)}
                 />
                 <YAxis
                   label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
@@ -521,6 +522,9 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Feelings Chart */}
+      <FeelingsChart data={journals} />
 
       {/* Sleep Timeline */}
       <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
@@ -564,7 +568,6 @@ export function Dashboard() {
                 <XAxis 
                   dataKey="date" 
                   tick={{ fontSize: 12 }}
-                  interval={Math.floor(sleepData.length / 7)}
                 />
                 <YAxis 
                   yAxisId="time"
@@ -629,7 +632,6 @@ export function Dashboard() {
                 <XAxis 
                   dataKey="date" 
                   tick={{ fontSize: 12 }}
-                  interval={Math.floor(sleepData.length / 7)}
                 />
                 <YAxis
                   domain={[0, 12]}
