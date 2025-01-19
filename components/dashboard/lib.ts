@@ -13,13 +13,10 @@ export interface JournalEntry {
   energy_score: number;
 }
 
-export interface SleepData {
-  date: string;
+export interface SleepData extends ProcessedData {
   asleep: number;
   awake: number;
-  core: number;
-  rem: number;
-  deep: number;
+  duration: number;
 }
 
 export interface ProcessedData {
@@ -34,16 +31,15 @@ export interface CustomTooltipProps {
 }
 
 export const EVENT_COLORS = {
-  awake: '#8884d8',
-  asleep: '#82ca9d',
-  core: '#ffc658',
-  rem: '#ff7300',
-  deep: '#00C49F',
   work_start: '#ffc658',
   work_end: '#ff7300',
   journal_start: '#00C49F',
   mood_score: '#FF69B4',
-  energy_score: '#4169E1'
+  energy_score: '#4169E1',
+  // Sleep timeline colors
+  awake: '#8884d8',
+  asleep: '#82ca9d',
+  duration: '#ffa07a'
 } as const;
 
 export type EventType = keyof typeof EVENT_COLORS;
@@ -101,6 +97,7 @@ interface RawSleepData {
   Core: string;
   REM: string;
   Deep: string;
+  'In Bed (hr)': string;
 }
 
 export const processSleepData = (sleepData: RawSleepData[]): SleepData[] => {
@@ -113,6 +110,7 @@ export const processSleepData = (sleepData: RawSleepData[]): SleepData[] => {
       date,
       asleep: startHour,
       awake: endHour,
+      duration: parseFloat(entry['In Bed (hr)']),
       core: parseFloat(entry.Core),
       rem: parseFloat(entry.REM),
       deep: parseFloat(entry.Deep)
@@ -381,6 +379,18 @@ export const analyzeEventScoreRelationship = (
   };
 };
 
+// Calculate average duration
+export const calculateAverageDuration = (data: SleepData[]): number | null => {
+  const validDurations = data
+    .filter(d => d.duration !== null && typeof d.duration === 'number')
+    .map(d => d.duration);
+
+  if (validDurations.length === 0) return null;
+
+  const avgDuration = validDurations.reduce((sum, duration) => sum + duration, 0) / validDurations.length;
+  return avgDuration;
+};
+
 // Calculate average time for an event
 export const calculateAverageTime = (data: ProcessedData[], eventType: EventType): number | null => {
   const validTimes = data
@@ -401,4 +411,59 @@ export const calculateAverageTime = (data: ProcessedData[], eventType: EventType
 
   const avgTime = validTimes.reduce((sum, time) => sum + time, 0) / validTimes.length;
   return avgTime;
+};
+
+// Location data interfaces
+export interface LocationLog {
+  id: string;
+  created_at: string;
+  location: 'home' | 'not_home';
+  home_state: boolean;
+}
+
+export interface DailyLocationStats {
+  date: string;
+  timeOutside: number; // hours spent outside
+}
+
+// Process location data to calculate daily time spent outside
+export const processLocationData = (locationLogs: LocationLog[]): DailyLocationStats[] => {
+  const dailyStats: { [key: string]: { timeOutside: number, lastHomeTime?: Date, lastNotHomeTime?: Date } } = {};
+
+  // Sort logs by creation time
+  const sortedLogs = [...locationLogs].sort((a, b) => 
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  sortedLogs.forEach((log, index) => {
+    const melbourneDate = toZonedTime(log.created_at, TIMEZONE);
+    const date = formatInTimeZone(melbourneDate, TIMEZONE, 'yyyy-MM-dd');
+    
+    if (!dailyStats[date]) {
+      dailyStats[date] = { timeOutside: 0 };
+    }
+
+    const currentTime = new Date(log.created_at);
+
+    if (log.location === 'not_home') {
+      dailyStats[date].lastNotHomeTime = currentTime;
+    } else if (log.location === 'home' && dailyStats[date].lastNotHomeTime) {
+      // Calculate time spent outside
+      const timeOutside = (currentTime.getTime() - dailyStats[date].lastNotHomeTime!.getTime()) / (1000 * 60 * 60);
+      dailyStats[date].timeOutside += timeOutside;
+      dailyStats[date].lastNotHomeTime = undefined;
+    }
+  });
+
+  return Object.entries(dailyStats).map(([date, stats]) => ({
+    date,
+    timeOutside: Number(stats.timeOutside.toFixed(2))
+  }));
+};
+
+// Calculate average time outside per day
+export const calculateAverageTimeOutside = (data: DailyLocationStats[]): number => {
+  if (data.length === 0) return 0;
+  const total = data.reduce((sum, day) => sum + day.timeOutside, 0);
+  return Number((total / data.length).toFixed(2));
 };
