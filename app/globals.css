@@ -47,6 +47,17 @@ body {
 .chart-container {
   @apply rounded-lg p-4 backdrop-blur-sm;
   background: linear-gradient(to bottom right, hsl(var(--card)), hsl(var(--card)/0.95));
+  box-shadow: 
+    0 1px 3px rgba(0,0,0,0.05),
+    0 1px 2px rgba(0,0,0,0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chart-container:hover {
+  transform: translateY(-1px);
+  box-shadow: 
+    0 4px 6px rgba(0,0,0,0.05),
+    0 2px 4px rgba(0,0,0,0.1);
 }
 
 /* Event Type Labels */
@@ -61,7 +72,19 @@ body {
 
 /* Smooth Chart Transitions */
 .recharts-line {
+  transition: opacity 0.3s ease, stroke-width 0.2s ease;
+}
+
+.recharts-line:hover {
+  stroke-width: 3px;
+}
+
+.recharts-cartesian-grid line {
   transition: opacity 0.2s ease;
+}
+
+.recharts-cartesian-axis-line {
+  transition: stroke 0.2s ease;
 }
 
 @layer utilities {

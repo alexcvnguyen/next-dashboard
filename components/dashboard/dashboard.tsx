@@ -1,12 +1,10 @@
-'use client';
+p'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { fetchSupabase } from '@/lib/supabase';
-import { format, subDays } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { format } from 'date-fns';
 import {
   EventType,
   EVENT_COLORS,
@@ -16,26 +14,23 @@ import {
   CustomTooltipProps,
   formatTimeToAMPM,
   generateYAxisTicks,
-  processEventData,
   JournalEntry,
-  TIMEZONE,
-  calculateAverageTime,
   SleepData,
-  processSleepData,
-  processLocationData,
-  DailyLocationStats
+  DailyLocationStats,
+  calculateAverageTime
 } from './lib';
 import { Social } from './social';
 import { Insights } from './insights';
 import { FeelingsChart } from './feelings-chart';
+import type { Workout } from '@/lib/supabase';
+import { getDashboardData } from '@/lib/data';
 
-interface Workout {
-  id: string;
-  workout_type: string;
-  start_time: string;
-  duration: string; // PostgreSQL interval comes as a string like '1 hour 30 minutes'
-  total_energy_kj: string;
-  distance_km: string | null;
+interface DashboardProps {
+  initialTimelineData: ProcessedData[];
+  initialSleepData: SleepData[];
+  initialLocationData: DailyLocationStats[];
+  initialWorkouts: Workout[];
+  initialJournals: JournalEntry[];
 }
 
 // Custom tooltip type
@@ -52,50 +47,112 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   return (
     <div className="bg-white/90 backdrop-blur-sm p-3 border border-gray-200 rounded-lg shadow-md">
       <p className="font-medium">{label}</p>
-      {payload
-        .filter((item: TooltipPayloadItem) => !item.dataKey?.toString().includes('_ma'))
-        .map((item: TooltipPayloadItem, index: number) => {
-          const value = typeof item.value === 'string' ? parseFloat(item.value) : item.value;
-          const name = item.name.toLowerCase().replace(/ /g, '_');
-          const isTimeValue = ['sleep_start', 'wake_up', 'journal_start', 'work_start', 'work_end'].includes(name);
-          const isDuration = name === 'sleep_duration';
-          const isScore = ['mood_score', 'energy_score'].includes(name);
-          
-          let displayValue: string | number = value;
-          let unit = '';
-          
-          if (isTimeValue) {
-            displayValue = formatTimeToAMPM(Number(value));
-          } else if (isDuration) {
-            displayValue = Number(value).toFixed(1);
-            unit = ' hours';
-          } else if (isScore) {
-            displayValue = Number(value).toFixed(2);
-            unit = ' points';
-          }
-          
-          return (
-            <p key={index} style={{ color: item.stroke }}>
-              {`${item.name}: ${displayValue}${unit}`}
-            </p>
-          );
-      })}
+      {payload.map((item, index) => (
+        <p key={index} style={{ color: item.dataKey ? EVENT_COLORS[item.dataKey as EventType] : item.name }}>
+          {item.name}: {typeof item.value === 'number' ? formatTimeToAMPM(item.value.toString()) : item.value}
+        </p>
+      ))}
     </div>
   );
 };
 
-export function Dashboard() {
+export function Dashboard({ 
+  initialTimelineData,
+  initialSleepData,
+  initialLocationData,
+  initialWorkouts,
+  initialJournals 
+}: DashboardProps) {
   // --- State ---
-  const [timelineData, setTimelineData] = useState<ProcessedData[]>([]);
-  const [sleepData, setSleepData] = useState<SleepData[]>([]);
+  const [timelineData, setTimelineData] = useState<ProcessedData[]>(initialTimelineData);
+  const [sleepData, setSleepData] = useState<SleepData[]>(initialSleepData);
   const [timeRange, setTimeRange] = useState('14');
   const [showRawData, setShowRawData] = useState(false);
   const selectedEvents = ['mood_score', 'energy_score', 'journal_start', 'work_start', 'work_end'] as EventType[];
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [locationData, setLocationData] = useState<DailyLocationStats[]>([]);
-  const [journals, setJournals] = useState<JournalEntry[]>([]);
+  const [workouts, setWorkouts] = useState<Workout[]>(initialWorkouts);
+  const [locationData, setLocationData] = useState<DailyLocationStats[]>(initialLocationData);
+  const [journals, setJournals] = useState<JournalEntry[]>(initialJournals);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch data when timeRange changes
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const data = await getDashboardData(parseInt(timeRange));
+        
+        // Process the data into the required formats
+        const processedTimelineData = data.flatMap(day => {
+          return day.daily_log_event_type.map((type, index) => ({
+            time: day.daily_log_created_at[index],
+            type: type as EventType,
+            value: type === 'work_end' && day.work_duration ? day.work_duration : undefined
+          }));
+        });
+
+        const processedSleepData = data.map(day => ({
+          date: day.date,
+          sleepStart: day.sleep_sleepstart,
+          rem: parseFloat(day.sleep_rem),
+          core: parseFloat(day.sleep_core),
+          source: day.sleep_source,
+          inBedStart: day.sleep_inbedstart,
+          inBedEnd: day.sleep_inbedend,
+          inBed: parseFloat(day.sleep_inbed),
+          asleep: parseFloat(day.sleep_asleep),
+          awake: parseFloat(day.sleep_awake),
+          deep: parseFloat(day.sleep_deep),
+          sleepEnd: day.sleep_sleepend
+        }));
+
+        const processedLocationData = data.map(day => ({
+          date: day.date,
+          eventTypes: day.daily_log_event_type,
+          createdAt: day.daily_log_created_at,
+          workDuration: day.work_duration,
+          moodScoreAverage: day.mood_score_average,
+          energyScoreAverage: day.energy_score_average
+        }));
+
+        const processedJournals = data.map(day => ({
+          date: day.date,
+          createdAt: day.journals_created_at,
+          mood: day.journals_mood,
+          moodScore: day.journals_mood_score,
+          energyScore: day.journals_energy_score
+        }));
+
+        setTimelineData(processedTimelineData);
+        setSleepData(processedSleepData);
+        setLocationData(processedLocationData);
+        setJournals(processedJournals);
+        setWorkouts(data.workouts);
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [timeRange]);
+
+  // Calculate averages for insights
+  const averages = useMemo(() => {
+    return Object.keys(EVENT_COLORS).reduce((acc: { [key: string]: string | number }, eventType) => {
+      if (['mood_score', 'energy_score'].includes(eventType)) {
+        const validValues = timelineData.filter(d => d[eventType] !== null);
+        const avg = validValues.length ? 
+          validValues.reduce((sum, d) => sum + (Number(d[eventType]) || 0), 0) / validValues.length : 
+          0;
+        acc[eventType] = avg.toFixed(2);
+      } else {
+        const avgTime = calculateAverageTime(timelineData, eventType as EventType);
+        acc[eventType] = avgTime !== null ? formatTimeToAMPM(avgTime) : '-';
+      }
+      return acc;
+    }, {});
+  }, [timelineData]);
 
   // Get moving average window size based on time range
   const getMovingAverageWindow = (days: number) => {
@@ -144,36 +201,48 @@ export function Dashboard() {
 
   // Memoize enhanced timeline data with moving averages and durations
   const enhancedTimelineData = useMemo(() => {
-    if (!timelineData.length) return timelineData;
+    if (!timelineData || !timelineData.length) return timelineData;
 
     const data = [...timelineData];
     const allEvents = [...selectedEvents, 'work_start', 'work_end', 'journal_start'];
     
     // Calculate durations
     data.forEach(item => {
+      // Initialize properties if they don't exist
+      item.journal_start = item.journal_start || null;
+      item.work_start = item.work_start || null;
+      item.work_end = item.work_end || null;
+      item.asleep = item.asleep || null;
+      
       // Calculate journaling duration (journal_start to work_start)
-      if (item.journal_start !== null && item.work_start !== null) {
+      if (item.journal_start && item.work_start) {
         const journalStart = Number(item.journal_start);
         const workStart = Number(item.work_start);
-        item.journaling_duration = workStart - journalStart;
+        if (!isNaN(journalStart) && !isNaN(workStart)) {
+          item.journaling_duration = workStart - journalStart;
+        }
       }
 
       // Calculate work duration (work_start to work_end)
-      if (item.work_start !== null && item.work_end !== null) {
+      if (item.work_start && item.work_end) {
         const workStart = Number(item.work_start);
         const workEnd = Number(item.work_end);
-        item.work_duration = workEnd - workStart;
+        if (!isNaN(workStart) && !isNaN(workEnd)) {
+          item.work_duration = workEnd - workStart;
+        }
       }
 
       // Calculate leisure duration (work_end to asleep)
-      if (item.work_end !== null && item.asleep !== null) {
+      if (item.work_end && item.asleep) {
         const workEnd = Number(item.work_end);
         let sleepTime = Number(item.asleep);
         // Adjust sleep time if it's after midnight
-        if (sleepTime < DAY_PIVOT_HOUR) {
-          sleepTime += HOURS_IN_DAY;
+        if (!isNaN(workEnd) && !isNaN(sleepTime)) {
+          if (sleepTime < DAY_PIVOT_HOUR) {
+            sleepTime += HOURS_IN_DAY;
+          }
+          item.leisure_duration = sleepTime - workEnd;
         }
-        item.leisure_duration = sleepTime - workEnd;
       }
     });
 
@@ -186,151 +255,11 @@ export function Dashboard() {
     });
 
     return data;
-  }, [selectedEvents, timelineData]);
-
-  // --- Data Fetching ---
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const startDate = format(subDays(new Date(), parseInt(timeRange)), 'yyyy-MM-dd');
-
-        // Fetch sleep data
-        const sleepExportData = await fetchSupabase('sleep_export', {
-          select: '*',
-          created_at: `gte.${startDate}`,
-          order: 'created_at.asc'
-        });
-        
-        // Process and filter sleep data for the selected time range
-        const processedSleepData = processSleepData(sleepExportData)
-          .filter(d => {
-            const date = new Date(d.date);
-            const start = new Date(startDate);
-            return date >= start;
-          })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        
-        // Add moving averages to sleep data
-        const asleepMA = calculateMovingAverage(processedSleepData, 'asleep');
-        const awakeMA = calculateMovingAverage(processedSleepData, 'awake');
-        const durationMA = calculateMovingAverage(processedSleepData, 'duration');
-        
-        const sleepDataWithMA = processedSleepData.map((data, index) => ({
-          ...data,
-          asleep_ma: asleepMA[index],
-          awake_ma: awakeMA[index],
-          duration_ma: durationMA[index]
-        }));
-        
-        setSleepData(sleepDataWithMA);
-
-        // Fetch workouts
-        const workoutData = await fetchSupabase('workouts', {
-          select: '*',
-          start_time: `gte.${startDate}`,
-          order: 'start_time.desc'
-        });
-        setWorkouts(workoutData);
-        
-        // Fetch daily logs
-        const events = await fetchSupabase('daily_log', {
-          select: '*',
-          created_at: `gte.${startDate}`,
-          order: 'created_at.asc'
-        });
-
-        // Fetch journal entries
-        const journalData = await fetchSupabase('journals', {
-          select: '*',
-          created_at: `gte.${startDate}`,
-          order: 'created_at.asc'
-        });
-        setJournals(journalData);
-
-        // Process daily logs
-        const processedEvents = processEventData(events);
-
-        // Process and merge journal data
-        const mergedData = processedEvents.map(dayData => {
-          const date = dayData.date;
-          const dayJournals = journalData.filter((j: JournalEntry) => 
-            formatInTimeZone(toZonedTime(j.created_at, TIMEZONE), TIMEZONE, 'yyyy-MM-dd') === date
-          );
-
-          if (dayJournals.length > 0) {
-            // Use the latest journal entry for the day
-            const latestJournal = dayJournals[dayJournals.length - 1];
-            return {
-              ...dayData,
-              mood_score: latestJournal.mood_score,
-              energy_score: latestJournal.energy_score
-            };
-          }
-          return dayData;
-        });
-
-        setTimelineData(mergedData);
-
-        // Fetch location data
-        const locationLogs = await fetchSupabase('location_log', {
-          select: '*',
-          created_at: `gte.${startDate}`,
-          order: 'created_at.desc'
-        });
-        const processedLocationData = processLocationData(locationLogs);
-        setLocationData(processedLocationData);
-
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setError('Failed to fetch data. Please try again later.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [timeRange]);
-
-  // --- Calculations ---
-  const calculateAverages = () => {
-    // Calculate averages for all event types, not just selected ones
-    return Object.keys(EVENT_COLORS).reduce((acc: { [key: string]: string | number }, eventType) => {
-      if (['mood_score', 'energy_score'].includes(eventType)) {
-        const validValues = timelineData.filter(d => d[eventType] !== null);
-        const avg = validValues.length ? 
-          validValues.reduce((sum, d) => sum + (Number(d[eventType]) || 0), 0) / validValues.length : 
-          0;
-        acc[eventType] = avg.toFixed(2);
-      } else {
-        const avgTime = calculateAverageTime(timelineData, eventType as EventType);
-        acc[eventType] = avgTime !== null ? formatTimeToAMPM(avgTime) : '-';
-      }
-      return acc;
-    }, {});
-  };
-
-  const averages = calculateAverages();
-
-  // Calculate sleep averages based on the filtered data
-  const sleepAverages = useMemo(() => {
-    if (!sleepData.length) return { asleep: 0, awake: 0, duration: 0 };
-
-    const asleepSum = sleepData.reduce((sum, d) => sum + d.asleep, 0);
-    const awakeSum = sleepData.reduce((sum, d) => sum + d.awake, 0);
-    const durationSum = sleepData.reduce((sum, d) => sum + d.duration, 0);
-
-    return {
-      asleep: asleepSum / sleepData.length,
-      awake: awakeSum / sleepData.length,
-      duration: durationSum / sleepData.length
-    };
-  }, [sleepData]);
+  }, [selectedEvents, timelineData, timeRange]);
 
   // Calculate chart lines
   const chartLines = useMemo(() => {
-    if (!timelineData.length) return [];
+    if (!timelineData || !timelineData.length) return [];
 
     return selectedEvents.flatMap(eventType => {
       const isScore = ['mood_score', 'energy_score'].includes(eventType);
@@ -341,12 +270,13 @@ export function Dashboard() {
         lines.push(
           <Line 
             key={eventType}
-            type="monotone" 
+            type="monotoneX" 
             dataKey={eventType} 
             stroke={EVENT_COLORS[eventType]}
             name={eventType.replace('_', ' ')}
             dot={{ r: 2, fill: EVENT_COLORS[eventType], strokeWidth: 1, fillOpacity: 0.6 }}
             yAxisId={isScore ? 'score' : 'time'}
+            strokeWidth={2}
           />
         );
       }
@@ -356,9 +286,10 @@ export function Dashboard() {
       lines.push(
         <Line 
           key={maKey}
-          type="monotone"
+          type="monotoneX"
           dataKey={maKey}
           stroke={EVENT_COLORS[eventType]}
+          strokeWidth={2}
           strokeDasharray={showRawData ? "5 5" : undefined}
           dot={false}
           yAxisId={isScore ? 'score' : 'time'}
@@ -372,7 +303,7 @@ export function Dashboard() {
     });
   }, [selectedEvents, timelineData, showRawData]);
 
-  // --- Loading & Error States ---
+  // --- Render ---
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50/30">
@@ -384,27 +315,12 @@ export function Dashboard() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50/30">
-        <div className="text-red-500 bg-red-50 p-4 rounded-lg border border-red-200 shadow-sm">
-          <p className="font-medium">{error}</p>
-          <p className="text-sm text-red-400 mt-1">Please try refreshing the page</p>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Render ---
   return (
     <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-6">
       {/* Header Section */}
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-lg border-b border-gray-100 -mx-4 px-4 py-3 md:-mx-6 md:px-6">
-        <div className="flex flex-row items-center justify-between gap-4 h-12">
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold truncate">Personal Insights</h1>
-            <p className="text-xs text-muted-foreground truncate">Alex&apos;s daily patterns and wellness metrics</p>
-          </div>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Dashboard</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowRawData(!showRawData)}
@@ -417,7 +333,7 @@ export function Dashboard() {
               {showRawData ? 'Show Smoothed' : 'Show Raw Data'}
             </button>
             <Select value={timeRange} onValueChange={setTimeRange}>
-              <SelectTrigger className="h-8 w-24 text-xs bg-white shadow-sm border-gray-200 hover:border-gray-300 transition-colors">
+              <SelectTrigger className="w-[120px]">
                 <SelectValue placeholder="Select range" />
               </SelectTrigger>
               <SelectContent>
@@ -432,224 +348,137 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Average Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-        {selectedEvents.map(eventType => (
-          <Card key={eventType} className="bg-white/50 backdrop-blur-sm hover:bg-white/80 transition-colors border-gray-100">
-            <CardHeader className="p-4">
-              <CardTitle className="text-sm font-medium text-gray-600">
-                Avg {eventType.split('_').join(' ')}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <p className="text-2xl font-bold text-gray-900">{averages[eventType]}</p>
-            </CardContent>
-          </Card>
-        ))}
+      {/* Main Content */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Sleep Chart */}
+        <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+          <CardHeader className="p-4 md:p-6">
+            <CardTitle className="text-xl font-semibold">Sleep Patterns</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 md:p-6">
+            <div className="w-full h-[40vh] min-h-[240px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sleepData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis 
+                    yAxisId="time"
+                    domain={[0, 24]} 
+                    ticks={generateYAxisTicks()} 
+                    tickFormatter={formatTimeToAMPM}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  {showRawData && (
+                    <>
+                      <Line 
+                        type="monotoneX" 
+                        dataKey="asleep" 
+                        stroke={EVENT_COLORS.asleep}
+                        name="Sleep Time"
+                        dot={{ r: 2, fill: EVENT_COLORS.asleep, strokeWidth: 1, fillOpacity: 0.6 }}
+                        yAxisId="time"
+                        strokeWidth={2}
+                      />
+                      <Line 
+                        type="monotoneX" 
+                        dataKey="awake" 
+                        stroke={EVENT_COLORS.awake}
+                        name="Wake Time"
+                        dot={{ r: 2, fill: EVENT_COLORS.awake, strokeWidth: 1, fillOpacity: 0.6 }}
+                        yAxisId="time"
+                        strokeWidth={2}
+                      />
+                    </>
+                  )}
+                  <Line 
+                    type="monotoneX"
+                    dataKey="asleep_ma"
+                    stroke={EVENT_COLORS.asleep}
+                    strokeWidth={2}
+                    strokeDasharray={showRawData ? "5 5" : undefined}
+                    dot={false}
+                    yAxisId="time"
+                    connectNulls
+                    name={showRawData ? undefined : "Sleep Time"}
+                    legendType={showRawData ? "none" : undefined}
+                  />
+                  <Line 
+                    type="monotoneX"
+                    dataKey="awake_ma"
+                    stroke={EVENT_COLORS.awake}
+                    strokeWidth={2}
+                    strokeDasharray={showRawData ? "5 5" : undefined}
+                    dot={false}
+                    yAxisId="time"
+                    connectNulls
+                    name={showRawData ? undefined : "Wake Time"}
+                    legendType={showRawData ? "none" : undefined}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Timeline Chart */}
+        <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
+          <CardHeader className="p-4 md:p-6">
+            <CardTitle className="text-xl font-semibold">Daily Timeline</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 md:p-6">
+            <div className="w-full h-[40vh] min-h-[240px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={enhancedTimelineData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis 
+                    yAxisId="time"
+                    domain={[0, 24]} 
+                    ticks={generateYAxisTicks()} 
+                    tickFormatter={formatTimeToAMPM}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis 
+                    yAxisId="score"
+                    orientation="right"
+                    domain={[0, 10]}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  {chartLines}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Daily Timeline */}
+      {/* Social Section */}
       <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
         <CardHeader className="p-4 md:p-6">
-          <CardTitle className="text-xl font-semibold">Daily Timeline</CardTitle>
+          <CardTitle className="text-xl font-semibold">Social & Location</CardTitle>
         </CardHeader>
-        <CardContent className="p-2 md:p-4">
-          <div className="w-full h-[50vh] md:h-[60vh] min-h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={enhancedTimelineData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis 
-                  yAxisId="time"
-                  domain={[DAY_PIVOT_HOUR, DAY_PIVOT_HOUR + HOURS_IN_DAY]}
-                  ticks={generateYAxisTicks()}
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={(value) => formatTimeToAMPM(value).split(' ')[0]}
-                />
-                <YAxis 
-                  yAxisId="score"
-                  orientation="right"
-                  domain={[0, 10]}
-                  tick={{ fontSize: 12 }}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend />
-                {chartLines}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Daily Durations */}
-          <div className="w-full h-[25vh] md:h-[30vh] min-h-[200px] mt-6">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={enhancedTimelineData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis
-                  label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
-                  tick={{ fontSize: 12 }}
-                />
-                <Tooltip 
-                  formatter={(value: number) => `${value.toFixed(1)} hours`}
-                />
-                <Legend />
-                <Bar 
-                  dataKey="journaling_duration" 
-                  name="Journaling Time"
-                  fill={EVENT_COLORS.journal_start} 
-                  stackId="a"
-                />
-                <Bar 
-                  dataKey="work_duration" 
-                  name="Work Time"
-                  fill={EVENT_COLORS.work_start} 
-                  stackId="a"
-                />
-                <Bar 
-                  dataKey="leisure_duration" 
-                  name="Leisure Time"
-                  fill="#8884d8" 
-                  stackId="a"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        <CardContent className="p-4 md:p-6">
+          <Social locationData={locationData} />
         </CardContent>
       </Card>
 
       {/* Feelings Chart */}
-      <FeelingsChart data={journals} />
-
-      {/* Sleep Timeline */}
       <Card className="bg-white/50 backdrop-blur-sm border-gray-100">
         <CardHeader className="p-4 md:p-6">
-          <CardTitle className="text-xl font-semibold">Sleep Insights</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">Tracking sleep using Apple Health data</p>
+          <CardTitle className="text-xl font-semibold">Feelings & States</CardTitle>
         </CardHeader>
         <CardContent className="p-4 md:p-6">
-          {/* Average Time Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6">
-            <Card className="bg-white/80 border-gray-100">
-              <CardHeader className="p-4">
-                <CardTitle className="text-sm font-medium text-gray-600">Average Sleep Time</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <p className="text-2xl font-bold text-gray-900">{formatTimeToAMPM(sleepAverages.asleep)}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-white/80 border-gray-100">
-              <CardHeader className="p-4">
-                <CardTitle className="text-sm font-medium text-gray-600">Average Wake Time</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <p className="text-2xl font-bold text-gray-900">{formatTimeToAMPM(sleepAverages.awake)}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-white/80 border-gray-100">
-              <CardHeader className="p-4">
-                <CardTitle className="text-sm font-medium text-gray-600">Average Duration</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0">
-                <p className="text-2xl font-bold text-gray-900">{sleepAverages.duration.toFixed(1)} hrs</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="w-full h-[40vh] min-h-[200px] p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={sleepData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis 
-                  yAxisId="time"
-                  domain={[DAY_PIVOT_HOUR, DAY_PIVOT_HOUR + HOURS_IN_DAY]}
-                  ticks={generateYAxisTicks()}
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={(value) => formatTimeToAMPM(value).split(' ')[0]}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend />
-                {showRawData && (
-                  <Line 
-                    type="monotone" 
-                    dataKey="asleep" 
-                    stroke={EVENT_COLORS.asleep}
-                    name="Sleep Start"
-                    yAxisId="time"
-                    dot={{ r: 2, fill: EVENT_COLORS.asleep, strokeWidth: 1, fillOpacity: 0.6 }}
-                  />
-                )}
-                <Line 
-                  type="monotone" 
-                  dataKey="asleep_ma"
-                  stroke={EVENT_COLORS.asleep}
-                  yAxisId="time"
-                  dot={false}
-                  strokeDasharray={showRawData ? "5 5" : undefined}
-                  connectNulls
-                  name={showRawData ? undefined : "Sleep Start"}
-                  legendType={showRawData ? "none" : undefined}
-                />
-                {showRawData && (
-                  <Line 
-                    type="monotone" 
-                    dataKey="awake" 
-                    stroke={EVENT_COLORS.awake}
-                    name="Wake Up"
-                    yAxisId="time"
-                    dot={{ r: 2, fill: EVENT_COLORS.awake, strokeWidth: 1, fillOpacity: 0.6 }}
-                  />
-                )}
-                <Line 
-                  type="monotone" 
-                  dataKey="awake_ma"
-                  stroke={EVENT_COLORS.awake}
-                  yAxisId="time"
-                  dot={false}
-                  strokeDasharray={showRawData ? "5 5" : undefined}
-                  connectNulls
-                  name={showRawData ? undefined : "Wake Up"}
-                  legendType={showRawData ? "none" : undefined}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Sleep Duration Chart */}
-          <div className="w-full h-[30vh] min-h-[150px] p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sleepData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis
-                  domain={[0, 12]}
-                  tick={{ fontSize: 12 }}
-                  label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
-                />
-                <Tooltip 
-                  formatter={(value: number) => `${value.toFixed(1)} hours`}
-                />
-                <Legend />
-                <Bar 
-                  dataKey="duration" 
-                  fill={EVENT_COLORS.duration}
-                  name="Sleep Duration"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <FeelingsChart data={journals} />
         </CardContent>
       </Card>
 
@@ -673,16 +502,12 @@ export function Dashboard() {
           <div className="space-y-6">
             {/* Group workouts by type */}
             {Object.entries(
-              workouts.reduce((acc, workout) => {
-                const type = ['Indoor Run', 'Outdoor Run', 'Outdoor Walk'].includes(workout.workout_type) 
-                  ? workout.workout_type 
-                  : 'Other Exercises';
-                if (!acc[type]) {
-                  acc[type] = [];
-                }
+              (workouts || []).reduce((acc, workout) => {
+                const type = workout.workout_type || 'Other';
+                if (!acc[type]) acc[type] = [];
                 acc[type].push(workout);
                 return acc;
-              }, {} as { [key: string]: Workout[] })
+              }, {} as Record<string, Workout[]>)
             )
             .sort(([a], [b]) => {
               const sortOrder = ['Outdoor Walk', 'Outdoor Run', 'Indoor Run', 'Other Exercises'];
@@ -773,6 +598,7 @@ export function Dashboard() {
                               />
                               <YAxis 
                                 yAxisId="duration"
+                                orientation="left"
                                 tick={{ fontSize: 12 }}
                                 label={{ value: 'Duration (mins)', angle: -90, position: 'insideLeft' }}
                               />
@@ -785,18 +611,20 @@ export function Dashboard() {
                               <Tooltip />
                               <Legend />
                               <Line 
-                                type="monotone" 
-                                dataKey="duration" 
-                                stroke="#8884d8" 
-                                yAxisId="duration"
+                                type="monotoneX"
+                                dataKey="duration"
+                                stroke="#10b981"
                                 name="Duration"
+                                yAxisId="duration"
+                                dot={{ r: 2, strokeWidth: 1, fillOpacity: 0.6 }}
                               />
                               <Line 
-                                type="monotone" 
-                                dataKey="distance" 
-                                stroke="#82ca9d" 
-                                yAxisId="distance"
+                                type="monotoneX"
+                                dataKey="distance"
+                                stroke="#3b82f6"
                                 name="Distance"
+                                yAxisId="distance"
+                                dot={{ r: 2, strokeWidth: 1, fillOpacity: 0.6 }}
                               />
                             </LineChart>
                           </ResponsiveContainer>
@@ -834,12 +662,6 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
-
-      {/* Social Section */}
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold px-1">Social</h2>
-        <Social locationData={locationData} />
-      </div>
     </div>
   );
 }

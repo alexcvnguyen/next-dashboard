@@ -1,0 +1,21 @@
+/* Import react-grid-layout styles */
+@import 'react-grid-layout/css/styles.css';
+@import 'react-resizable/css/styles.css';
+
+.debugContainer {
+  width: 100%;
+  min-height: 600px;
+}
+
+.debugCard {
+  transition: box-shadow 0.2s ease;
+}
+
+.debugCard:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.tableContainer {
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
+} 

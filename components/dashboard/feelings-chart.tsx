@@ -51,6 +51,13 @@ export function FeelingsChart({ data }: FeelingsChartProps) {
     const emotionCounts = new Map<string, EmotionCount>();
     const stateCounts = new Map<string, EmotionCount>();
 
+    if (!data || !data.length) {
+      return { 
+        emotionsData: { name: 'emotions', children: [] }, 
+        statesData: { name: 'states', children: [] } 
+      };
+    }
+
     data.forEach(entry => {
       // Process positive feelings
       entry.positive_feelings?.forEach((emotion: string) => {
@@ -129,7 +136,7 @@ export function FeelingsChart({ data }: FeelingsChartProps) {
     return { emotionsData: emotionsHierarchy, statesData: statesHierarchy };
   }, [data]);
 
-  if (!data.length) return null;
+  if (!data || !data.length) return null;
 
   const CircleChart = ({ data }: { data: HierarchicalNode }) => (
     <ResponsiveCirclePacking
